@@ -642,6 +642,53 @@ export default function SaaSApplication() {
       setIsCausing(false);
     }
   };
+  
+  const handleDownloadErpPlan = async () => {
+    const orgId = currentUser?.organization_id;
+    if (!orgId) {
+      alert("Error: No se encontró una organización activa en la sesión.");
+      return;
+    }
+
+    const token = localStorage.getItem("access_token") || "";
+
+    try {
+      const response = await fetch(`${API_BASE}/export/${selectedErp}/${orgId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || "Error al generar el archivo plano.");
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `Importacion_${selectedErp}_${orgId.slice(0, 8)}`;
+      
+      if (contentDisposition && contentDisposition.includes("filename=")) {
+        const matches = contentDisposition.match(/filename=(.+)/);
+        if (matches && matches[1]) {
+          filename = matches[1].replace(/['"]/g, "").trim();
+        }
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert("No se pudo descargar el plano: " + err.message);
+    }
+  };
+
+  
 
   const toggleSelectInvoice = (id: string) => {
     setSelectedInvoiceIds((prev) =>
@@ -3852,14 +3899,14 @@ export default function SaaSApplication() {
                     <option value="world_office">World Office (.xlsx)</option>
                   </select>
                   <button
-                    type="button"
-                    onClick={() => alert(`Generando descarga para ${selectedErp.toUpperCase()}...`)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Descargar Plano</span>
-                  </button>
-                </div>
+					type="button"
+					onClick={handleDownloadErpPlan}
+					className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
+				  >
+					<Download className="w-4 h-4" />
+					<span>Descargar Plano</span>
+				  </button>
+				</div>
               </div>
             </div>
           )}
