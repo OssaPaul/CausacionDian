@@ -1,0 +1,13 @@
+-- 1. Vaciar la tabla de líneas de asientos contables
+DELETE FROM public.journal_lines;
+
+-- 2. Regresar el estado de todas las facturas a PARSEADO para re-causarlas
+UPDATE public.invoices 
+SET status = 'PARSEADO';
+
+-- 3. (Opcional) Limpiar las cuentas asignadas previamente en ítems e impuestos si deseas reiniciarlas por completo
+UPDATE public.invoice_items 
+SET puc_account_debit = NULL, puc_account_credit = NULL;
+
+UPDATE public.invoice_taxes 
+SET puc_account_debit = NULL, puc_account_credit = NULL;

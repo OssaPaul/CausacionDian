@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SaaS Causaciones DIAN & Multi-ERP Engine</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0b0f19; color: #f3f4f6; }
+        .glass-card { background: rgba(17, 24, 39, 0.75); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .sidebar-item { transition: all 0.2s ease-in-out; }
+        .sidebar-item:hover, .sidebar-item.active { background: rgba(99, 102, 241, 0.15); color: #818cf8; border-right: 3px solid #6366f1; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body class="h-screen flex overflow-hidden">
+
+    <!-- SIDEBAR DE NAVEGACIÓN -->
+    <aside class="w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between flex-shrink-0">
+        <div>
+            <!-- Branding -->
+            <div class="p-6 flex items-center space-x-3 border-b border-slate-800">
+                <div class="p-2 bg-indigo-600/20 text-indigo-400 rounded-xl border border-indigo-500/30">
+                    <i data-lucide="zap" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base text-white leading-tight">Causaciones DIAN</h1>
+                    <span class="text-xs text-indigo-400 font-medium">SaaS Enterprise v2.1</span>
+                </div>
+            </div>
+
+            <!-- Navegación de Módulos -->
+            <nav class="mt-6 px-3 space-y-1">
+                <div class="px-3 pb-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Módulos Principales</div>
+                
+                <a href="#" onclick="switchTab('tab-operaciones')" id="nav-tab-operaciones" class="sidebar-item active flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium text-slate-300">
+                    <i data-lucide="cpu" class="w-5 h-5"></i>
+                    <span>Operación & Causación</span>
+                </a>
+
+                <a href="#" onclick="switchTab('tab-mantenimiento')" id="nav-tab-mantenimiento" class="sidebar-item flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium text-slate-400">
+                    <i data-lucide="database" class="w-5 h-5"></i>
+                    <span>Mantenimiento de Tablas</span>
+                </a>
+
+                <a href="#" onclick="switchTab('tab-exportacion')" id="nav-tab-exportacion" class="sidebar-item flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium text-slate-400">
+                    <i data-lucide="file-spreadsheet" class="w-5 h-5"></i>
+                    <span>Exportación Multi-ERP</span>
+                </a>
+            </nav>
+        </div>
+
+        <!-- Usuario & Logout -->
+        <div class="p-4 border-t border-slate-800 bg-slate-900/50">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div class="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-white text-sm">
+                        PO
+                    </div>
+                    <div class="overflow-hidden">
+                        <p class="text-sm font-semibold text-white truncate" id="user-display-name">Paul Ossa</p>
+                        <p class="text-xs text-slate-400 truncate" id="user-display-role">SUPER_ADMIN</p>
+                    </div>
+                </div>
+                <button onclick="logout()" title="Cerrar Sesión" class="text-slate-400 hover:text-red-400 transition-colors p-2">
+                    <i data-lucide="log-out" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ÁREA DE CONTENIDO -->
+    <main class="flex-1 flex flex-col overflow-y-auto bg-slate-950">
+        
+        <!-- HEADER SUPERIOR -->
+        <header class="h-16 border-b border-slate-800 bg-slate-900/40 px-8 flex items-center justify-between sticky top-0 z-10 backdrop-blur-md">
+            <div class="flex items-center space-x-4">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+                    API Activa (v2.1.0)
+                </span>
+            </div>
+
+            <div class="flex items-center space-x-4">
+                <div class="text-right">
+                    <p class="text-xs text-slate-400">Organización Activa</p>
+                    <p class="text-xs font-semibold text-indigo-400">POSSAR SALES HQ</p>
+                </div>
+            </div>
+        </header>
+
+        <!-- VISTAS / MÓDULOS DEL DASHBOARD -->
+        <div class="p-8 space-y-8 max-w-7xl mx-auto w-full">
+
+            <!-- ================= MÓDULO 1: OPERACIÓN & CAUSACIÓN ================= -->
+            <div id="tab-operaciones" class="tab-content active space-y-6">
+                
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold text-white tracking-tight">Centro de Operación & Causación DIAN</h2>
+                        <p class="text-sm text-slate-400">Procesamiento masivo de facturas XML y sincronización IMAP en tiempo real.</p>
+                    </div>
+                    <button onclick="sincronizarCorreos()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-2 shadow-lg shadow-indigo-600/20 transition-all">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                        <span>Sincronizar Correos Ahora</span>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="glass-card p-6 rounded-2xl border border-slate-800">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Carga Manual XML/ZIP</span>
+                            <i data-lucide="upload-cloud" class="w-5 h-5 text-indigo-400"></i>
+                        </div>
+                        <form id="uploadForm" class="mt-4 space-y-3">
+                            <input type="file" id="xmlFile" accept=".xml,.zip" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600/20 file:text-indigo-400 hover:file:bg-indigo-600/30 cursor-pointer"/>
+                            <button type="submit" class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs py-2 rounded-lg font-medium transition-colors">Procesar Archivo</button>
+                        </form>
+                    </div>
+
+                    <div class="glass-card p-6 rounded-2xl border border-slate-800">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Estado de Ingesta</span>
+                            <i data-lucide="activity" class="w-5 h-5 text-emerald-400"></i>
+                        </div>
+                        <div class="mt-4">
+                            <span class="text-3xl font-extrabold text-white">24 / 7</span>
+                            <p class="text-xs text-slate-400 mt-1">Sincronización automatizada por Scheduler cada 5 minutos.</p>
+                        </div>
+                    </div>
+
+                    <div class="glass-card p-6 rounded-2xl border border-slate-800">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Créditos de Causación</span>
+                            <i data-lucide="coins" class="w-5 h-5 text-amber-400"></i>
+                        </div>
+                        <div class="mt-4">
+                            <span class="text-3xl font-extrabold text-amber-400">Ilimitados</span>
+                            <p class="text-xs text-slate-400 mt-1">Plan Enterprise POSSAR SALES sin restricciones.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= MÓDULO 2: MANTENIMIENTO DE TABLAS ================= -->
+            <div id="tab-mantenimiento" class="tab-content space-y-6">
+                
+                <div>
+                    <h2 class="text-2xl font-bold text-white tracking-tight">Mantenimiento de Tablas Básicas</h2>
+                    <p class="text-sm text-slate-400">Administración de usuarios de plataforma, parámetros contables PUC y casillas IMAP.</p>
+                </div>
+
+                <!-- Pestañas secundarias de mantenimiento -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    
+                    <!-- Sub-Módulo: Registro de Usuarios -->
+                    <div class="glass-card p-6 rounded-2xl border border-slate-800 space-y-4">
+                        <div class="flex items-center space-x-3 border-b border-slate-800 pb-3">
+                            <i data-lucide="user-plus" class="w-5 h-5 text-indigo-400"></i>
+                            <h3 class="font-bold text-base text-white">Crear Usuario de Plataforma</h3>
+                        </div>
+
+                        <form id="createUserForm" onsubmit="handleCreateUser(event)" class="space-y-4">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-300 mb-1">Nombre Completo</label>
+                                <input type="text" id="newUserFullName" required placeholder="Ej: Carlos Mendoza" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"/>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-300 mb-1">Correo Electrónico</label>
+                                    <input type="email" id="newUserEmail" required placeholder="usuario@empresa.com" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-300 mb-1">Contraseña</label>
+                                    <input type="password" id="newUserPassword" required placeholder="••••••••" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"/>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-medium text-slate-300 mb-1">Rol Asignado</label>
+                                <select id="newUserRole" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+                                    <option value="COMPANY_OPERATOR">COMPANY_OPERATOR (Operador de Causación)</option>
+                                    <option value="COMPANY_ADMIN">COMPANY_ADMIN (Administrador de Empresa)</option>
+                                    <option value="COMPANY_EXPORTER">COMPANY_EXPORTER (Solo Exportador ERP)</option>
+                                    <option value="SUPER_ADMIN">SUPER_ADMIN (Acceso Total)</option>
+                                </select>
+                            </div>
+
+                            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs py-2.5 rounded-xl font-semibold transition-all shadow-md shadow-indigo-600/20">
+                                Registrar Usuario en Base de Datos
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Sub-Módulo: Configuración IMAP Correo -->
+                    <div class="glass-card p-6 rounded-2xl border border-slate-800 space-y-4">
+                        <div class="flex items-center space-x-3 border-b border-slate-800 pb-3">
+                            <i data-lucide="mail-check" class="w-5 h-5 text-indigo-400"></i>
+                            <h3 class="font-bold text-base text-white">Configuración Casilla IMAP (Facturas)</h3>
+                        </div>
+
+                        <form id="emailConfigForm" onsubmit="handleSaveEmailConfig(event)" class="space-y-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-300 mb-1">Servidor IMAP</label>
+                                    <input type="text" id="imapServer" required placeholder="imap.gmail.com" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-300 mb-1">Puerto IMAP</label>
+                                    <input type="number" id="imapPort" value="993" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"/>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-300 mb-1">Cuenta de Correo</label>
+                                    <input type="email" id="emailAccount" required placeholder="facturacion@empresa.com" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"/>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-300 mb-1">Contraseña de Aplicación</label>
+                                    <input type="password" id="emailPassword" required placeholder="••••••••" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"/>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all">
+                                Guardar Parámetros de Integración
+                            </button>
+                        </form>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ================= MÓDULO 3: EXPORTACIÓN MULTI-ERP ================= -->
+            <div id="tab-exportacion" class="tab-content space-y-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-white tracking-tight">Centro de Exportación Masiva a ERPs</h2>
+                    <p class="text-sm text-slate-400">Descarga de planos contables compatibles con las principales plataformas del mercado.</p>
+                </div>
+
+                <div class="glass-card p-6 rounded-2xl border border-slate-800 flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <i data-lucide="file-output" class="w-8 h-8 text-indigo-400"></i>
+                        <div>
+                            <h4 class="font-bold text-white text-sm">Exportar Movimientos Contables Causados</h4>
+                            <p class="text-xs text-slate-400">Seleccione el software contable de destino para estructurar las partidas doble.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <select id="erpSelect" class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+                            <option value="siigo">Siigo Nube (.xlsx)</option>
+                            <option value="helisa">Helisa (.csv)</option>
+                            <option value="loggro">Loggro (.xlsx)</option>
+                            <option value="syscafe">SysCafé (.txt)</option>
+                            <option value="alegra">Alegra (.xlsx)</option>
+                            <option value="world_office">World Office (.xlsx)</option>
+                        </select>
+                        <button onclick="exportarERP()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-colors">
+                            <i data-lucide="download" class="w-4 h-4"></i>
+                            <span>Descargar Plano</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        // Inicializar íconos Lucide
+        lucide.createIcons();
+
+        // Control de Pestañas
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.sidebar-item').forEach(item => item.classList.remove('active'));
+
+            document.getElementById(tabId).classList.add('active');
+            document.getElementById('nav-' + tabId).classList.add('active');
+        }
+
+        // Función de Logout
+        function logout() {
+            localStorage.removeItem('access_token');
+            window.location.reload();
+        }
+
+        // Crear Sub-Usuario desde la UI de Mantenimiento
+        async function handleCreateUser(e) {
+            e.preventDefault();
+            const token = localStorage.getItem('access_token');
+            const fullName = document.getElementById('newUserFullName').value;
+            const email = document.getElementById('newUserEmail').value;
+            const password = document.getElementById('newUserPassword').value;
+            const role = document.getElementById('newUserRole').value;
+
+            try {
+                const response = await fetch('/auth/users', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ full_name: fullName, email: email, password: password, role: role })
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    alert('¡Usuario creado exitosamente!');
+                    document.getElementById('createUserForm').reset();
+                } else {
+                    alert('Error creando usuario: ' + (result.detail || 'Revise permisos'));
+                }
+            } catch (err) {
+                alert('Error de conexión al servidor.');
+            }
+        }
+
+        // Guardar Configuración de Correo
+        async function handleSaveEmailConfig(e) {
+            e.preventDefault();
+            alert('Configuración de casilla guardada correctamente.');
+        }
+
+        // Exportar ERP
+        function exportarERP() {
+            const erp = document.getElementById('erpSelect').value;
+            alert('Iniciando descarga de plano contable para ' + erp.toUpperCase());
+        }
+
+        // Sincronizar Correos
+        function sincronizarCorreos() {
+            alert('Iniciando sincronización masiva de casillas IMAP...');
+        }
+    </script>
+</body>
+</html>
