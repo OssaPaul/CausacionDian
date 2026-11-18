@@ -87,24 +87,25 @@ class PucAccountingEngine:
             acc = item.get('puc_account_debit') or item.get('puc_account')
             return {'account': acc, 'name': "Cuenta asignada en ítem", 'source': 'PERSISTED'}
 
-        # 2. Excepción por NIT del proveedor
+        # 2. Excepción por NIT del proveedor (Obtenemos el código UNSPSC asignado a este NIT)
+        unspsc_code = ""
         if issuer_nit in self.provider_rules:
-            return {
-                'account': self.provider_rules[issuer_nit],
-                'name': f"Gasto/Compra por Excepción NIT {issuer_nit}",
-                'source': 'NIT_RULE'
-            }
+            unspsc_code = str(self.provider_rules[issuer_nit]).strip()
 
-        # 3. Maestro UNSPSC (Búsqueda exacta del código)
-        unspsc_code = str(item.get('unspsc_code', '')).strip()
+        # 3. Si el NIT no tiene UNSPSC propio asignado, tomamos el que trae el ítem de la factura
+        if not unspsc_code:
+            unspsc_code = str(item.get('unspsc_code', '')).strip()
+
+        # 4. Buscamos ese código UNSPSC en el maestro global (unspsc_master) para extraer la cuenta PUC y descripción
         if unspsc_code and unspsc_code in self.unspsc_master:
             unspsc_info = self.unspsc_master[unspsc_code]
             suggested_acc = unspsc_info.get('suggested_puc_account')
             if suggested_acc:
+                source_label = 'NIT_UNSPSC_RULE' if issuer_nit in self.provider_rules else f"UNSPSC_{unspsc_info.get('category_type', 'GENERAL')}"
                 return {
                     'account': suggested_acc,
                     'name': f"UNSPSC {unspsc_code}: {unspsc_info.get('description', 'Inventario/Gasto')}",
-                    'source': f"UNSPSC_{unspsc_info.get('category_type', 'GENERAL')}"
+                    'source': source_label
                 }
 
         # 4. Cascada contra los parámetros de la empresa (Buscando conceptos clave de Compra, Costo o Gasto)

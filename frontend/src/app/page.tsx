@@ -212,12 +212,14 @@ export default function SaaSApplication() {
   const [showUnspscForm, setShowUnspscForm] = useState(false);
   const [editingUnspscId, setEditingUnspscId] = useState<string | null>(null);
   const [unspscFormData, setUnspscFormData] = useState({
-    code: "",
-    description: "",
-    category_type: "COMPRA",
-    suggested_puc_account: ""
-  });
-  
+     code: "",
+     description: "",
+     category_type: "COMPRA",
+     suggested_puc_account: "",
+     tipo_documento: "01" as "01" | "91" | "92",
+     suggested_tipmov: "D" as "D" | "C"
+   });
+   
   // --- ESTADO FACTURACIÓN SAAS (SUPER_ADMIN) ---
   const [billingKpis, setBillingKpis] = useState({
     total_organizations: 0,
@@ -271,7 +273,8 @@ export default function SaaSApplication() {
     concept_name: "",
     account_puc: "",
     account_name: "",
-    nature: "D" as "D" | "C"
+    nature: "D" as "D" | "C",
+    tipo_documento: "01" as "01" | "91" | "92"
   });
   const [paramSearchFilter, setParamSearchFilter] = useState("");
 
@@ -2725,7 +2728,26 @@ export default function SaaSApplication() {
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">
-                              Código Concepto DIAN
+                              Tipo de Documento DIAN
+                            </label>
+                            <select
+                              value={paramFormData.tipo_documento}
+                              onChange={(e) =>
+                                setParamFormData({
+                                  ...paramFormData,
+                                  tipo_documento: e.target.value as "01" | "91" | "92"
+                                })
+                              }
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                            >
+                              <option value="01">01 - Factura Electrónica</option>
+                              <option value="91">91 - Nota Crédito</option>
+                              <option value="92">92 - Nota Débito</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">
+                              Código de Concepto
                             </label>
                             <input
                               type="text"
@@ -2734,21 +2756,6 @@ export default function SaaSApplication() {
                               value={paramFormData.concept_code}
                               onChange={(e) =>
                                 setParamFormData({ ...paramFormData, concept_code: e.target.value })
-                              }
-                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-slate-400 mb-1">
-                              Cuenta PUC
-                            </label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="Ej: 23654025"
-                              value={paramFormData.account_puc}
-                              onChange={(e) =>
-                                setParamFormData({ ...paramFormData, account_puc: e.target.value })
                               }
                               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                             />
@@ -3713,6 +3720,19 @@ export default function SaaSApplication() {
                         className="space-y-4"
                       >
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Tipo de Documento DIAN</label>
+                            <select
+                              value={unspscFormData.tipo_documento}
+                              onChange={(e) => setUnspscFormData({ ...unspscFormData, tipo_documento: e.target.value as "01" | "91" | "92" })}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                            >
+                              <option value="01">01 - Factura (Compra)</option>
+                              <option value="91">91 - Nota Crédito (Devolución)</option>
+                              <option value="92">92 - Nota Débito (Mayor valor)</option>
+                            </select>
+                          </div>
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">Código UNSPSC</label>
                             <input
@@ -3724,6 +3744,20 @@ export default function SaaSApplication() {
                               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                             />
                           </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Naturaleza Movimiento (tipmov)</label>
+                            <select
+                              value={unspscFormData.suggested_tipmov}
+                              onChange={(e) => setUnspscFormData({ ...unspscFormData, suggested_tipmov: e.target.value as "D" | "C" })}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono font-semibold text-emerald-400"
+                            >
+                              <option value="D">D - Débito (Gasto/Inventario)</option>
+                              <option value="C">C - Crédito (Reversión/Devolución)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">  
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">Categoría / Naturaleza</label>
                             <select
@@ -3759,6 +3793,7 @@ export default function SaaSApplication() {
                             />
                           </div>
                         </div>
+
 
                         <div className="flex justify-end gap-2 pt-2">
                           <button

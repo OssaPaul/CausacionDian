@@ -18,7 +18,7 @@ class InvoiceItem:
 
 @dataclass
 class InvoiceTax:
-    tax_type: str  # IVA, INC, RETEFUENTE, RETEIVA, RETEICA, IC_LICORES, IC_CIGARRILLOS, etc.
+    tax_type: str
     percent: float
     taxable_amount: float
     tax_amount: float
@@ -27,7 +27,8 @@ class InvoiceTax:
 @dataclass
 class ParsedInvoice:
     cufe: str
-    document_type: str
+    document_type: str  # '01'=Factura, '91'=Nota Crédito, '92'=Nota Débito
+    billing_reference: Optional[str]  # Número o CUFE del documento afectado
     prefix: Optional[str]
     number: str
     full_number: str
@@ -47,11 +48,6 @@ class ParsedInvoice:
 
 
 class DianXmlParser:
-    """
-    Parser robusto para extraer información contable de facturas electrónicas DIAN (UBL 2.1).
-    Soporta archivos .xml directos, paquetes .zip y contenedores AttachedDocument.
-    """
-
     NAMESPACES = {
         'cbc': 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2',
         'cac': 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2',
@@ -60,24 +56,10 @@ class DianXmlParser:
         'sts': 'dian:gov:co:facturaelectronica:Structures-2-1',
     }
 
-    # Mapeo completo según la tabla oficial de tributos de la DIAN (Anexo Técnico UBL 2.1)
     TAX_SCHEME_MAP = {
-        '01': 'IVA',
-        '02': 'IC_CIGARRILLOS',
-        '03': 'ICA',
-        '04': 'INC',
-        '05': 'RETEIVA',
-        '06': 'RETEFUENTE',
-        '07': 'RETEICA',
-        '08': 'IC_LICORES',
-        '20': 'FSD',
-        '22': 'INC_BOLSAS',
-        '30': 'IC_DATOS',
-        '32': 'IC_CIGARRILLOS_ESP',
-        '33': 'IC_LICORES_ESP',
-        '34': 'IBUA',
-        '35': 'ICUI',
-        'ZZ': 'OTROS_TRIBUTOS',
+        '01': 'IVA', '02': 'IC_CIGARRILLOS', '03': 'ICA', '04': 'INC',
+        '05': 'RETEIVA', '06': 'RETEFUENTE', '07': 'RETEICA', '08': 'IC_LICORES',
+        '20': 'FSD', '22': 'INC_BOLSAS', '30': 'IC_DATOS', '34': 'IBUA', '35': 'ICUI', 'ZZ': 'OTROS_TRIBUTOS',
     }
 
     def __init__(self, xml_content: Union[str, bytes]):
@@ -87,7 +69,6 @@ class DianXmlParser:
         if isinstance(content, str):
             content = content.encode('utf-8')
 
-        # Si el contenido ingresa empaquetado en un archivo ZIP
         if content.startswith(b'PK\x03\x04'):
             with zipfile.ZipFile(io.BytesIO(content)) as z:
                 xml_files = [f for f in z.namelist() if f.endswith('.xml')]
@@ -99,24 +80,11 @@ class DianXmlParser:
         parser = etree.XMLParser(recover=True, remove_blank_text=True)
         root = etree.fromstring(content, parser=parser)
 
-        # Si es un AttachedDocument, extraer el XML específico de la Invoice
         if root.tag.endswith('AttachedDocument'):
-            descriptions = root.xpath(
-                '//cac:Attachment/cac:ExternalReference/cbc:Description/text()',
-                namespaces=self.NAMESPACES
-            )
-            invoice_xml = None
-            for desc in descriptions:
-                if '<Invoice' in desc or '<CreditNote' in desc:
-                    invoice_xml = desc
-                    break
-            
-            if not invoice_xml and descriptions:
-                invoice_xml = descriptions[0]
-
+            descriptions = root.xpath('//cac:Attachment/cac:ExternalReference/cbc:Description/text()', namespaces=self.NAMESPACES)
+            invoice_xml = next((desc for desc in descriptions if '<Invoice' in desc or '<CreditNote' in desc or '<DebitNote' in desc), descriptions[0] if descriptions else None)
             if invoice_xml:
-                inner_bytes = invoice_xml.strip().encode('utf-8')
-                root = etree.fromstring(inner_bytes, parser=parser)
+                root = etree.fromstring(invoice_xml.strip().encode('utf-8'), parser=parser)
 
         return etree.ElementTree(root)
 
@@ -138,13 +106,24 @@ class DianXmlParser:
         return default
 
     def parse(self) -> ParsedInvoice:
-        cufe = self._xpath_text('//cbc:UUID/text()') or ""
-        full_number = self._xpath_text('/fe:Invoice/cbc:ID/text() | //cbc:ID/text()') or ""
-        doc_type = self._xpath_text('//cbc:InvoiceTypeCode/text()') or "01"
-        issue_date = self._xpath_text('//cbc:IssueDate/text()') or ""
+        root_tag = self.tree.getroot().tag
+        
+        # Identificación robusta del tipo de documento DIAN
+        doc_type = "01"
+        if "CreditNote" in root_tag:
+            doc_type = "91"
+        elif "DebitNote" in root_tag:
+            doc_type = "92"
+        else:
+            doc_type = self._xpath_text('//cbc:InvoiceTypeCode/text()') or "01"
 
-        raw_issue_time = self._xpath_text('//cbc:IssueTime/text()')
-        issue_time = raw_issue_time.strip() if raw_issue_time else None
+        cufe = self._xpath_text('//cbc:UUID/text()') or ""
+        full_number = self._xpath_text('//cbc:ID/text()') or ""
+        issue_date = self._xpath_text('//cbc:IssueDate/text()') or ""
+        issue_time = self._xpath_text('//cbc:IssueTime/text()')
+
+        # Referencia al documento afectado (para Notas Crédito / Débito)
+        billing_ref = self._xpath_text('//cac:BillingReference//cac:InvoiceDocumentReference/cbc:ID/text()')
 
         prefix = None
         number = full_number
@@ -153,23 +132,12 @@ class DianXmlParser:
             prefix = prefix_val
             number = full_number[len(prefix_val):]
 
-        # Emisor
         issuer_nit = self._xpath_text('//cac:AccountingSupplierParty//cbc:CompanyID/text()') or ""
-        issuer_name = (
-            self._xpath_text('//cac:AccountingSupplierParty//cac:PartyLegalEntity/cbc:RegistrationName/text()')
-            or self._xpath_text('//cac:AccountingSupplierParty//cac:PartyName/cbc:Name/text()')
-            or ""
-        )
+        issuer_name = self._xpath_text('//cac:AccountingSupplierParty//cac:PartyLegalEntity/cbc:RegistrationName/text()') or ""
 
-        # Receptor
         receiver_nit = self._xpath_text('//cac:AccountingCustomerParty//cbc:CompanyID/text()') or ""
-        receiver_name = (
-            self._xpath_text('//cac:AccountingCustomerParty//cac:PartyLegalEntity/cbc:RegistrationName/text()')
-            or self._xpath_text('//cac:AccountingCustomerParty//cac:PartyName/cbc:Name/text()')
-            or ""
-        )
+        receiver_name = self._xpath_text('//cac:AccountingCustomerParty//cac:PartyLegalEntity/cbc:RegistrationName/text()') or ""
 
-        # Totales
         currency = self._xpath_text('//cbc:DocumentCurrencyCode/text()') or "COP"
         line_ext = round(self._xpath_float('//cac:LegalMonetaryTotal/cbc:LineExtensionAmount/text()'), 2)
         tax_excl = round(self._xpath_float('//cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount/text()'), 2)
@@ -182,6 +150,7 @@ class DianXmlParser:
         return ParsedInvoice(
             cufe=cufe,
             document_type=doc_type,
+            billing_reference=billing_ref,
             prefix=prefix,
             number=number,
             full_number=full_number,
@@ -202,7 +171,7 @@ class DianXmlParser:
 
     def _parse_items(self) -> List[InvoiceItem]:
         items = []
-        lines = self.tree.xpath('//cac:InvoiceLine | //cac:CreditNoteLine', namespaces=self.NAMESPACES)
+        lines = self.tree.xpath('//cac:InvoiceLine | //cac:CreditNoteLine | //cac:DebitNoteLine', namespaces=self.NAMESPACES)
 
         for line in lines:
             line_num_str = line.xpath('./cbc:ID/text()', namespaces=self.NAMESPACES)
@@ -211,7 +180,7 @@ class DianXmlParser:
             seller_id = line.xpath('./cac:Item/cac:SellersItemIdentification/cbc:ID/text()', namespaces=self.NAMESPACES)
             unspsc_id = line.xpath('./cac:Item/cac:StandardItemIdentification/cbc:ID/text()', namespaces=self.NAMESPACES)
             description = line.xpath('./cac:Item/cbc:Description/text()', namespaces=self.NAMESPACES)
-            qty = line.xpath('./cbc:InvoicedQuantity/text() | ./cbc:CreditedQuantity/text()', namespaces=self.NAMESPACES)
+            qty = line.xpath('./cbc:InvoicedQuantity/text() | ./cbc:CreditedQuantity/text() | ./cbc:DebitedQuantity/text()', namespaces=self.NAMESPACES)
             price = line.xpath('./cac:Price/cbc:PriceAmount/text()', namespaces=self.NAMESPACES)
             subtotal = line.xpath('./cbc:LineExtensionAmount/text()', namespaces=self.NAMESPACES)
 
@@ -229,7 +198,6 @@ class DianXmlParser:
 
     def _parse_taxes(self) -> List[InvoiceTax]:
         taxes = []
-        # Extraer impuestos generados (TaxTotal) e impuestos retenidos (WithholdingTaxTotal)
         tax_nodes = self.tree.xpath('//cac:TaxTotal | //cac:WithholdingTaxTotal', namespaces=self.NAMESPACES)
 
         for tax_node in tax_nodes:
@@ -237,8 +205,6 @@ class DianXmlParser:
             for sub in subtotals:
                 tax_code_list = sub.xpath('./cac:TaxCategory/cac:TaxScheme/cbc:ID/text()', namespaces=self.NAMESPACES)
                 tax_code = tax_code_list[0] if tax_code_list else ""
-                
-                # Mapear según la tabla DIAN o mantener el código si no existe en el diccionario
                 tax_name = self.TAX_SCHEME_MAP.get(tax_code, f"IMPUESTO_{tax_code}" if tax_code else "OTROS")
 
                 percent = sub.xpath('./cac:TaxCategory/cbc:Percent/text()', namespaces=self.NAMESPACES)

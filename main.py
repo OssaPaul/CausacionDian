@@ -1053,6 +1053,7 @@ async def upload_xml(
         "direction": direction.upper(),
         "document_type": parsed_data.document_type,
         "cufe": parsed_data.cufe,
+        "billing_reference": getattr(parsed_data, 'billing_reference', None),
         "prefix": parsed_data.prefix,
         "number": parsed_data.number,
         "full_number": parsed_data.full_number,
@@ -1204,10 +1205,16 @@ def _execute_single_invoice_causation(invoice_id: str, grouping_mode: GroupingMo
     )
     
     journal_entry = engine.generate_journal_entry(
-        invoice_id=invoice["id"], full_number=invoice["full_number"],
-        issuer_nit=invoice["issuer_nit"], issuer_name=invoice["issuer_name"],
-        line_extension_amount=invoice["line_extension_amount"], payable_amount=invoice["payable_amount"],
-        items=items_data, taxes=taxes_data, mode=grouping_mode
+        invoice_id=invoice["id"], 
+        full_number=invoice["full_number"],
+        document_type=invoice.get("document_type", "01"),
+        issuer_nit=invoice["issuer_nit"], 
+        issuer_name=invoice["issuer_name"],
+        line_extension_amount=invoice["line_extension_amount"], 
+        payable_amount=invoice["payable_amount"],
+        items=items_data, 
+        taxes=taxes_data, 
+        mode=grouping_mode
     )
 
     # --- PERSISTIR CUENTAS RESUELTAS EN CADA ÍTEM (invoice_items) ---
