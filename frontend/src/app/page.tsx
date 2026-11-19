@@ -228,7 +228,180 @@ export default function SaaSApplication() {
     total_invoices_caused: 0
   });
   const [billingRows, setBillingRows] = useState<BillingOrgRow[]>([]);
+  
+  // --- ESTADO EMISOR SAAS Y PREFACTURAS (SUPER_ADMIN) ---
+  const [issuerConfig, setIssuerConfig] = useState<any>({
+    business_name: "POSSAR SALES S.A.S.",
+    trade_name: "POSSAR SALES",
+    nit: "",
+    dv: "",
+    person_type: "1",
+    tax_regime: "48",
+    fiscal_responsibilities: "O-48",
+    ciiu_code: "6201",
+    address: "",
+    city_code: "05631",
+    city_name: "Sabaneta",
+    department_code: "05",
+    department_name: "Antioquia",
+    postal_code: "055450",
+    email: "",
+    phone: "",
+    dian_prefix: "FE",
+    dian_environment: "2",
+    is_active: true
+  });
+  const [showIssuerModal, setShowIssuerModal] = useState(false);
+  const [isSavingIssuer, setIsSavingIssuer] = useState(false);
+  const [prefacturasList, setPrefacturasList] = useState<any[]>([]);
+  const [activePrefacturaModal, setActivePrefacturaModal] = useState<{
+    prefactura: any;
+    issuer: any;
+    client: any;
+  } | null>(null);
+  const [isGeneratingPrefactura, setIsGeneratingPrefactura] = useState(false);
+  const [clientDraftModal, setClientDraftModal] = useState<{
+    row: BillingOrgRow;
+    profile: {
+      name: string;
+      nit: string;
+      dv: string;
+      person_type: string;
+      tax_regime: string;
+      fiscal_responsibilities: string;
+      email: string;
+      phone: string;
+      address: string;
+      city_code: string;
+      city_name: string;
+      department_code: string;
+      department_name: string;
+      postal_code: string;
+      country_code: string;
+    };
+    due_days: number;
+    payment_means_code: string;
+    notes: string;
+  } | null>(null);
 
+  const loadBillingExtras = async (token: string) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    try {
+      const [resIss, resPref] = await Promise.all([
+        fetch(`${API_BASE}/billing/issuer-config`, { headers }),
+        fetch(`${API_BASE}/billing/prefacturas`, { headers })
+      ]);
+      if (resIss.ok) {
+        const dIss = await resIss.json();
+        if (dIss.config) setIssuerConfig(dIss.config);
+      }
+      if (resPref.ok) {
+        const dPref = await resPref.json();
+        setPrefacturasList(dPref.prefacturas || dPref.data || []);
+      }
+    } catch (err) {
+      console.error("Error cargando datos de prefacturación:", err);
+    }
+  };
+
+  const handleSaveIssuerConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingIssuer(true);
+    const token = localStorage.getItem("access_token") || "";
+    try {
+      const res = await fetch(`${API_BASE}/billing/issuer-config`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(issuerConfig)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.config) setIssuerConfig(data.config);
+        alert("¡Datos del Emisor SaaS y configuración DIAN guardados!");
+        setShowIssuerModal(false);
+      } else {
+        alert("Error guardando emisor: " + (data.detail || "Revise los campos"));
+      }
+    } catch (err) {
+      alert("Error de conexión al guardar datos del emisor.");
+    } finally {
+      setIsSavingIssuer(false);
+    }
+  };
+
+  const openEmitirPrefacturaModal = (row: BillingOrgRow) => {
+    const fullOrg = organizationsList.find((o: any) => o.id === row.organization_id) as any;
+    setClientDraftModal({
+      row,
+      profile: {
+        name: fullOrg?.name || row.organization_name || "",
+        nit: fullOrg?.nit || row.organization_nit || "",
+        dv: fullOrg?.dv || "",
+        person_type: fullOrg?.person_type || "1",
+        tax_regime: fullOrg?.tax_regime || "48",
+        fiscal_responsibilities: fullOrg?.fiscal_responsibilities || "R-99-PN",
+        email: fullOrg?.email || "",
+        phone: fullOrg?.phone || "",
+        address: fullOrg?.address || "",
+        city_code: fullOrg?.city_code || "05001",
+        city_name: fullOrg?.city_name || "Medellín",
+        department_code: fullOrg?.department_code || "05",
+        department_name: fullOrg?.department_name || "Antioquia",
+        postal_code: fullOrg?.postal_code || "050001",
+        country_code: fullOrg?.country_code || "CO"
+      },
+      due_days: 15,
+      payment_means_code: "42",
+      notes: ""
+    });
+  };
+
+  const handleConfirmGeneratePrefactura = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clientDraftModal) return;
+    setIsGeneratingPrefactura(true);
+    const token = localStorage.getItem("access_token") || "";
+    try {
+      const res = await fetch(`${API_BASE}/billing/prefacturas`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          organization_id: clientDraftModal.row.organization_id,
+          due_days: clientDraftModal.due_days,
+          payment_means_code: clientDraftModal.payment_means_code,
+          payment_method_code: "1",
+          notes: clientDraftModal.notes || undefined,
+          client_profile: clientDraftModal.profile
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.prefactura) {
+        setClientDraftModal(null);
+        setActivePrefacturaModal({
+          prefactura: data.prefactura,
+          issuer: data.issuer || issuerConfig,
+          client: data.client || clientDraftModal.profile
+        });
+        await Promise.all([
+          loadAllMaintenanceTables(token, "SUPER_ADMIN"),
+          loadBillingExtras(token)
+        ]);
+      } else {
+        alert("Error generando prefactura: " + (data.detail || "Verifique suscripción y datos"));
+      }
+    } catch (err) {
+      alert("Error de conexión al generar prefactura.");
+    } finally {
+      setIsGeneratingPrefactura(false);
+    }
+  };
+  
   // --- ESTADOS DE FORMULARIOS (CREAR Y EDITAR) ---
   const [showOrgForm, setShowOrgForm] = useState(false);
   const [editingOrgId, setEditingOrgId] = useState<string | null>(null);
@@ -380,6 +553,10 @@ export default function SaaSApplication() {
           const dataSubs = await resSubs.json();
           setSubscriptionsList(dataSubs.data || dataSubs.subscriptions || []);
         }
+
+		if (role === "SUPER_ADMIN") {
+        await loadBillingExtras(token);
+		}
 
         const resPlans = await fetch(`${API_BASE}/subscription-plans`, { headers });
         if (resPlans.ok) {
@@ -4042,27 +4219,36 @@ export default function SaaSApplication() {
              ================================================================== */}
           {activeTab === "facturacion" && isSuperAdmin && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-2xl font-bold text-white tracking-tight">
                     Facturación & Control Comercial SaaS (SUPER_ADMIN)
                   </h2>
                   <p className="text-sm text-slate-400">
-                    Consolidado de consumo de créditos, facturas causadas y estados de cuenta por
-                    organización cliente.
+                    Consolidado de consumo de créditos, emisión de prefacturas y preparación para facturación electrónica DIAN.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const token = localStorage.getItem("access_token") || "";
-                    loadAllMaintenanceTables(token, "SUPER_ADMIN");
-                  }}
-                  className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  <span>Actualizar Corte</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowIssuerModal(true)}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer"
+                  >
+                    <Building2 className="w-4 h-4" />
+                    <span>Datos Emisor & DIAN</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const token = localStorage.getItem("access_token") || "";
+                      loadAllMaintenanceTables(token, "SUPER_ADMIN");
+                    }}
+                    className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>Actualizar Corte</span>
+                  </button>
+                </div>
               </div>
 
               {/* TARJETAS KPI FINANCIERAS */}
@@ -4110,7 +4296,7 @@ export default function SaaSApplication() {
                       <th className="px-5 py-3.5">Plan</th>
                       <th className="px-5 py-3.5 text-center">Facturas (Pend / Caus)</th>
                       <th className="px-5 py-3.5 text-right">Créditos (Usados / Asig)</th>
-                      <th className="px-5 py-3.5 text-right">Valor a Facturar</th>
+                      <th className="px-5 py-3.5 text-right">Valor Plan</th>
                       <th className="px-5 py-3.5">Estado Comercial</th>
                       <th className="px-5 py-3.5 text-right">Acción</th>
                     </tr>
@@ -4150,17 +4336,7 @@ export default function SaaSApplication() {
                           {row.is_active ? (
                             <button
                               type="button"
-                              onClick={() =>
-                                alert(
-                                  `Pre-factura generada para ${row.organization_name} (NIT ${
-                                    row.organization_nit
-                                  })\nPlan: ${row.plan_name}\nCréditos consumidos: ${
-                                    row.credits_used
-                                  }/${row.credits_allocated}\nTotal a cobrar: $${Number(
-                                    row.monthly_fee
-                                  ).toLocaleString("es-CO")} COP`
-                                )
-                              }
+                              onClick={() => openEmitirPrefacturaModal(row)}
                               className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-lg text-[11px] font-semibold cursor-pointer"
                             >
                               Emitir Cobro
@@ -4183,10 +4359,677 @@ export default function SaaSApplication() {
                   </tbody>
                 </table>
               </div>
+
+              {/* HISTORIAL DE PREFACTURAS EMITIDAS */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
+                <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">
+                      Prefacturas Emitidas ({prefacturasList.length})
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Documentos comerciales previos a la emisión de factura electrónica DIAN.
+                    </p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-300">
+                    <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="px-5 py-3.5">Consecutivo</th>
+                        <th className="px-5 py-3.5">Cliente / NIT</th>
+                        <th className="px-5 py-3.5">Plan / Excedentes</th>
+                        <th className="px-5 py-3.5 text-right">Subtotal</th>
+                        <th className="px-5 py-3.5 text-right">IVA</th>
+                        <th className="px-5 py-3.5 text-right">Total</th>
+                        <th className="px-5 py-3.5 text-center">Estado</th>
+                        <th className="px-5 py-3.5 text-right">Documento</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {prefacturasList.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
+                            Aún no se han emitido prefacturas. Usa el botón &ldquo;Emitir Cobro&rdquo; en una organización activa.
+                          </td>
+                        </tr>
+                      ) : (
+                        prefacturasList.map((pf: any) => (
+                          <tr key={pf.id} className="hover:bg-slate-800/30">
+                            <td className="px-5 py-3.5 font-mono font-bold text-indigo-300">
+                              {pf.prefactura_number}
+                            </td>
+                            <td className="px-5 py-3.5">
+                              <div className="font-semibold text-white">{pf.client_name}</div>
+                              <div className="text-[10px] font-mono text-slate-400">
+                                NIT: {pf.client_nit}{pf.client_dv ? `-${pf.client_dv}` : ""}
+                              </div>
+                            </td>
+                            <td className="px-5 py-3.5 font-mono text-[11px]">
+                              <div>{pf.plan_name}</div>
+                              <div className="text-slate-400">
+                                Excedentes: {pf.excess_credits || 0} cr.
+                              </div>
+                            </td>
+                            <td className="px-5 py-3.5 text-right font-mono">
+                              ${Number(pf.subtotal_amount || 0).toLocaleString("es-CO")}
+                            </td>
+                            <td className="px-5 py-3.5 text-right font-mono text-slate-400">
+                              ${Number(pf.iva_amount || 0).toLocaleString("es-CO")}
+                            </td>
+                            <td className="px-5 py-3.5 text-right font-mono font-bold text-emerald-400">
+                              ${Number(pf.total_amount || 0).toLocaleString("es-CO")}
+                            </td>
+                            <td className="px-5 py-3.5 text-center">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800/50">
+                                {pf.status || "PREFACTURA"}
+                              </span>
+                            </td>
+                            <td className="px-5 py-3.5 text-right">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setActivePrefacturaModal({
+                                    prefactura: pf,
+                                    issuer: issuerConfig,
+                                    client: {
+                                      name: pf.client_name,
+                                      nit: pf.client_nit,
+                                      dv: pf.client_dv,
+                                      email: pf.client_email,
+                                      address: pf.client_address,
+                                      city_name: pf.client_city_name || "",
+                                      department_name: pf.client_department_name || "",
+                                      tax_regime: pf.client_tax_regime,
+                                      fiscal_responsibilities: pf.client_fiscal_responsibilities
+                                    }
+                                  })
+                                }
+                                className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Ver Prefactura</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
-        </div>
-      </main>
+{/* MODAL CONFIGURACIÓN EMISOR SAAS & PARÁMETROS DIAN */}
+          {showIssuerModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+                <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-white">
+                      Configuración del Emisor SaaS & Habilitación DIAN
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Datos fiscales de tu empresa para encabezar la prefactura y preparar la facturación electrónica.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowIssuerModal(false)}
+                    className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/60 cursor-pointer"
+                  >
+                    <XCircle className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveIssuerConfig} className="p-6 overflow-y-auto space-y-4 text-xs">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-slate-400 mb-1">Razón Social Emisor</label>
+                      <input
+                        type="text"
+                        required
+                        value={issuerConfig.business_name || ""}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, business_name: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">NIT Emisor</label>
+                      <input
+                        type="text"
+                        required
+                        value={issuerConfig.nit || ""}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, nit: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">DV</label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={2}
+                        value={issuerConfig.dv || ""}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, dv: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-slate-400 mb-1">Régimen Tributario</label>
+                      <select
+                        value={issuerConfig.tax_regime || "48"}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, tax_regime: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      >
+                        <option value="48">48 - Responsable de IVA (19%)</option>
+                        <option value="49">49 - No Responsable de IVA</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Responsabilidades Fiscales</label>
+                      <input
+                        type="text"
+                        value={issuerConfig.fiscal_responsibilities || "O-48"}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, fiscal_responsibilities: e.target.value })}
+                        placeholder="Ej: O-48 o R-99-PN"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Correo de Facturación</label>
+                      <input
+                        type="email"
+                        required
+                        value={issuerConfig.email || ""}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, email: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-slate-400 mb-1">Dirección</label>
+                      <input
+                        type="text"
+                        required
+                        value={issuerConfig.address || ""}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, address: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Ciudad / Municipio (Cód. DANE)</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={issuerConfig.city_code || "05631"}
+                          onChange={(e) => setIssuerConfig({ ...issuerConfig, city_code: e.target.value })}
+                          className="w-24 bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-white font-mono"
+                        />
+                        <input
+                          type="text"
+                          value={issuerConfig.city_name || "Sabaneta"}
+                          onChange={(e) => setIssuerConfig({ ...issuerConfig, city_name: e.target.value })}
+                          className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Teléfono</label>
+                      <input
+                        type="text"
+                        value={issuerConfig.phone || ""}
+                        onChange={(e) => setIssuerConfig({ ...issuerConfig, phone: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-800">
+                    <p className="text-[11px] font-bold text-indigo-400 uppercase mb-3">
+                      Preparación Facturación Electrónica DIAN (Resolución / Habilitación)
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-slate-400 mb-1">Prefijo Autorizado</label>
+                        <input
+                          type="text"
+                          value={issuerConfig.dian_prefix || "FE"}
+                          onChange={(e) => setIssuerConfig({ ...issuerConfig, dian_prefix: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Nº Resolución DIAN</label>
+                        <input
+                          type="text"
+                          value={issuerConfig.dian_resolution_number || ""}
+                          onChange={(e) => setIssuerConfig({ ...issuerConfig, dian_resolution_number: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Ambiente DIAN</label>
+                        <select
+                          value={issuerConfig.dian_environment || "2"}
+                          onChange={(e) => setIssuerConfig({ ...issuerConfig, dian_environment: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                        >
+                          <option value="2">2 - Habilitación / Pruebas</option>
+                          <option value="1">1 - Producción</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowIssuerModal(false)}
+                      className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingIssuer}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingIssuer ? "Guardando..." : "Guardar Datos del Emisor"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL COMPLETAR / CONFIRMAR DATOS FISCALES DEL CLIENTE PARA PREFACTURA */}
+          {clientDraftModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+                <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-white">
+                      Emitir Prefactura — {clientDraftModal.row.organization_name}
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Confirma los datos del cliente (adquiriente) para la prefactura y la futura factura electrónica DIAN.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setClientDraftModal(null)}
+                    className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/60 cursor-pointer"
+                  >
+                    <XCircle className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleConfirmGeneratePrefactura} className="p-6 overflow-y-auto space-y-4 text-xs">
+                  <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl flex flex-wrap justify-between gap-2 font-mono">
+                    <span>Plan: <strong className="text-indigo-400">{clientDraftModal.row.plan_name}</strong></span>
+                    <span>Tarifa base: <strong className="text-emerald-400">${Number(clientDraftModal.row.monthly_fee || 0).toLocaleString("es-CO")}</strong></span>
+                    <span>Créditos: <strong className="text-amber-400">{clientDraftModal.row.credits_used} / {clientDraftModal.row.credits_allocated}</strong></span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="block text-slate-400 mb-1">Razón Social Cliente</label>
+                      <input
+                        type="text"
+                        required
+                        value={clientDraftModal.profile.name}
+                        onChange={(e) =>
+                          setClientDraftModal({
+                            ...clientDraftModal,
+                            profile: { ...clientDraftModal.profile, name: e.target.value }
+                          })
+                        }
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="block text-slate-400 mb-1">NIT</label>
+                        <input
+                          type="text"
+                          required
+                          value={clientDraftModal.profile.nit}
+                          onChange={(e) =>
+                            setClientDraftModal({
+                              ...clientDraftModal,
+                              profile: { ...clientDraftModal.profile, nit: e.target.value }
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                        />
+                      </div>
+                      <div className="w-16">
+                        <label className="block text-slate-400 mb-1">DV</label>
+                        <input
+                          type="text"
+                          maxLength={2}
+                          value={clientDraftModal.profile.dv}
+                          onChange={(e) =>
+                            setClientDraftModal({
+                              ...clientDraftModal,
+                              profile: { ...clientDraftModal.profile, dv: e.target.value }
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-2 py-2 text-white font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-slate-400 mb-1">Correo para Envío de Prefactura / XML DIAN</label>
+                      <input
+                        type="email"
+                        value={clientDraftModal.profile.email}
+                        onChange={(e) =>
+                          setClientDraftModal({
+                            ...clientDraftModal,
+                            profile: { ...clientDraftModal.profile, email: e.target.value }
+                          })
+                        }
+                        placeholder="contabilidad@cliente.com"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Dirección Fiscal</label>
+                      <input
+                        type="text"
+                        value={clientDraftModal.profile.address}
+                        onChange={(e) =>
+                          setClientDraftModal({
+                            ...clientDraftModal,
+                            profile: { ...clientDraftModal.profile, address: e.target.value }
+                          })
+                        }
+                        placeholder="Cra 43A # 1-50"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-slate-400 mb-1">Régimen IVA Cliente</label>
+                      <select
+                        value={clientDraftModal.profile.tax_regime}
+                        onChange={(e) =>
+                          setClientDraftModal({
+                            ...clientDraftModal,
+                            profile: { ...clientDraftModal.profile, tax_regime: e.target.value }
+                          })
+                        }
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      >
+                        <option value="48">48 - Responsable de IVA</option>
+                        <option value="49">49 - No Responsable de IVA</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Días de Vencimiento</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={120}
+                        value={clientDraftModal.due_days}
+                        onChange={(e) =>
+                          setClientDraftModal({
+                            ...clientDraftModal,
+                            due_days: parseInt(e.target.value) || 15
+                          })
+                        }
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-400 mb-1">Medio de Pago</label>
+                      <select
+                        value={clientDraftModal.payment_means_code}
+                        onChange={(e) =>
+                          setClientDraftModal({
+                            ...clientDraftModal,
+                            payment_means_code: e.target.value
+                          })
+                        }
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      >
+                        <option value="42">42 - Consignación / Transferencia</option>
+                        <option value="10">10 - Efectivo</option>
+                        <option value="47">47 - Transferencia Débito</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-400 mb-1">Observaciones en la Prefactura</label>
+                    <input
+                      type="text"
+                      value={clientDraftModal.notes}
+                      onChange={(e) => setClientDraftModal({ ...clientDraftModal, notes: e.target.value })}
+                      placeholder="Opcional: periodo, orden de compra o referencia..."
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setClientDraftModal(null)}
+                      className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isGeneratingPrefactura}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl cursor-pointer disabled:opacity-50"
+                    >
+                      {isGeneratingPrefactura ? "Generando Prefactura..." : "Generar Documento de Prefactura"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL DOCUMENTO COMERCIAL DE PREFACTURA */}
+          {activePrefacturaModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white text-slate-900 rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
+                <div className="px-6 py-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Receipt className="w-5 h-5 text-emerald-400" />
+                    <span className="font-bold text-sm">
+                      Prefactura {activePrefacturaModal.prefactura.prefactura_number}
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                      {activePrefacturaModal.prefactura.status || "PREFACTURA"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                    >
+                      Imprimir / Guardar PDF
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Disponible en el siguiente paso: Facturación Electrónica DIAN"
+                      className="px-3 py-1.5 bg-slate-700 text-slate-400 rounded-lg text-xs font-semibold cursor-not-allowed"
+                    >
+                      Emitir Factura DIAN (Paso 4)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePrefacturaModal(null)}
+                      className="p-1.5 text-slate-300 hover:text-white rounded-lg bg-slate-800 cursor-pointer"
+                    >
+                      <XCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-7 overflow-y-auto space-y-6 text-xs">
+                  <div className="flex flex-wrap justify-between gap-4 border-b border-slate-200 pb-5">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Emisor del Servicio SaaS
+                      </p>
+                      <h4 className="text-base font-extrabold text-slate-900 mt-0.5">
+                        {activePrefacturaModal.issuer?.business_name || "POSSAR SALES S.A.S."}
+                      </h4>
+                      <p className="font-mono text-slate-600">
+                        NIT: {activePrefacturaModal.issuer?.nit || "-"}
+                        {activePrefacturaModal.issuer?.dv ? `-${activePrefacturaModal.issuer.dv}` : ""}
+                      </p>
+                      <p className="text-slate-600">
+                        {activePrefacturaModal.issuer?.address || ""} — {activePrefacturaModal.issuer?.city_name || ""}
+                      </p>
+                      <p className="text-slate-600">{activePrefacturaModal.issuer?.email || ""}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Documento de Cobro Previo
+                      </p>
+                      <p className="text-lg font-extrabold font-mono text-indigo-700">
+                        {activePrefacturaModal.prefactura.prefactura_number}
+                      </p>
+                      <p className="text-slate-600">
+                        Periodo: <span className="font-mono">{activePrefacturaModal.prefactura.billing_period_start}</span> a{" "}
+                        <span className="font-mono">{activePrefacturaModal.prefactura.billing_period_end}</span>
+                      </p>
+                      <p className="text-slate-600">
+                        Vencimiento: <span className="font-mono font-semibold">{activePrefacturaModal.prefactura.due_date}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Cliente / Adquiriente
+                      </p>
+                      <p className="font-bold text-slate-900 text-sm mt-0.5">
+                        {activePrefacturaModal.prefactura.client_name}
+                      </p>
+                      <p className="font-mono text-slate-600">
+                        NIT: {activePrefacturaModal.prefactura.client_nit}
+                        {activePrefacturaModal.prefactura.client_dv ? `-${activePrefacturaModal.prefactura.client_dv}` : ""}
+                      </p>
+                      <p className="text-slate-600">{activePrefacturaModal.prefactura.client_address || "Dirección por completar"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Información Fiscal & Consumo
+                      </p>
+                      <p className="text-slate-700 mt-0.5">
+                        Correo: <span className="font-mono">{activePrefacturaModal.prefactura.client_email || "-"}</span>
+                      </p>
+                      <p className="text-slate-700">
+                        Régimen IVA: <span className="font-mono">{activePrefacturaModal.prefactura.client_tax_regime || "48"}</span> | Resp:{" "}
+                        <span className="font-mono">{activePrefacturaModal.prefactura.client_fiscal_responsibilities || "R-99-PN"}</span>
+                      </p>
+                      <p className="text-slate-700">
+                        Créditos plan: <span className="font-mono font-semibold">{activePrefacturaModal.prefactura.credits_allocated}</span> | Consumidos:{" "}
+                        <span className="font-mono font-semibold">{activePrefacturaModal.prefactura.credits_used}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-100 text-[10px] uppercase text-slate-600 border-b border-slate-200">
+                        <tr>
+                          <th className="px-4 py-2.5">Concepto</th>
+                          <th className="px-4 py-2.5 text-right">Cantidad</th>
+                          <th className="px-4 py-2.5 text-right">Tarifa</th>
+                          <th className="px-4 py-2.5 text-right">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        <tr>
+                          <td className="px-4 py-3">
+                            <p className="font-semibold text-slate-900">
+                              Suscripción Plan {activePrefacturaModal.prefactura.plan_name}
+                            </p>
+                            <p className="text-[11px] text-slate-500">
+                              Incluye {activePrefacturaModal.prefactura.credits_allocated} créditos de causación/procesamiento
+                            </p>
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono">1</td>
+                          <td className="px-4 py-3 text-right font-mono">
+                            ${Number(activePrefacturaModal.prefactura.plan_base_amount || 0).toLocaleString("es-CO")}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-semibold">
+                            ${Number(activePrefacturaModal.prefactura.plan_base_amount || 0).toLocaleString("es-CO")}
+                          </td>
+                        </tr>
+                        {Number(activePrefacturaModal.prefactura.excess_credits || 0) > 0 && (
+                          <tr>
+                            <td className="px-4 py-3">
+                              <p className="font-semibold text-slate-900">
+                                Créditos Excedentes Consumidos
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                Superaron el cupo asignado del plan en el periodo
+                              </p>
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono">
+                              {activePrefacturaModal.prefactura.excess_credits}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono">
+                              ${Number(activePrefacturaModal.prefactura.additional_credit_fee || 0).toLocaleString("es-CO")}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-semibold">
+                              ${Number(activePrefacturaModal.prefactura.excess_amount || 0).toLocaleString("es-CO")}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex flex-wrap justify-between items-end gap-4 pt-2">
+                    <div className="max-w-md text-slate-500 text-[11px]">
+                      <p className="font-semibold text-slate-700 mb-0.5">Notas:</p>
+                      <p>{activePrefacturaModal.prefactura.notes}</p>
+                    </div>
+                    <div className="w-full sm:w-64 space-y-1.5 font-mono">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Subtotal:</span>
+                        <span>${Number(activePrefacturaModal.prefactura.subtotal_amount || 0).toLocaleString("es-CO")}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>IVA ({Number(activePrefacturaModal.prefactura.iva_rate || 0)}%):</span>
+                        <span>${Number(activePrefacturaModal.prefactura.iva_amount || 0).toLocaleString("es-CO")}</span>
+                      </div>
+                      <div className="flex justify-between text-sm font-extrabold text-slate-900 border-t border-slate-300 pt-2">
+                        <span>TOTAL COP:</span>
+                        <span>${Number(activePrefacturaModal.prefactura.total_amount || 0).toLocaleString("es-CO")}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+		</div>
+	  </main>
     </div>
   );
 }

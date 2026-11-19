@@ -6,7 +6,7 @@ import traceback
 from datetime import date, timedelta
 from typing import Optional, Dict, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends, Query, status, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, Query, status, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -673,6 +673,287 @@ def get_saas_billing_summary():
         "organizations_billing": billing_rows
     }
 
+# --- ESQUEMAS PYDANTIC PARA EMISOR SAAS, PERFIL FISCAL CLIENTE Y PREFACTURAS ---
+
+class SaaSIssuerConfigSchema(BaseModel):
+    business_name: str
+    trade_name: Optional[str] = "POSSAR SALES"
+    nit: str
+    dv: str
+    person_type: str = "1"
+    tax_regime: str = "48"
+    fiscal_responsibilities: str = "O-48"
+    ciiu_code: Optional[str] = "6201"
+    address: str
+    city_code: str = "05631"
+    city_name: str = "Sabaneta"
+    department_code: str = "05"
+    department_name: str = "Antioquia"
+    postal_code: Optional[str] = "055450"
+    email: str
+    phone: Optional[str] = None
+    dian_prefix: Optional[str] = "PREF"
+    dian_resolution_number: Optional[str] = None
+    dian_resolution_date: Optional[str] = None
+    dian_range_from: Optional[int] = 1
+    dian_range_to: Optional[int] = 10000
+    dian_current_number: Optional[int] = 0
+    dian_technical_key: Optional[str] = None
+    dian_software_id: Optional[str] = None
+    dian_software_pin: Optional[str] = None
+    dian_environment: Optional[str] = "2"
+    is_active: bool = True
+
+class OrganizationBillingProfileSchema(BaseModel):
+    name: str
+    nit: str
+    dv: Optional[str] = ""
+    person_type: Optional[str] = "1"
+    tax_regime: Optional[str] = "48"
+    fiscal_responsibilities: Optional[str] = "R-99-PN"
+    email: Optional[str] = ""
+    phone: Optional[str] = ""
+    address: Optional[str] = ""
+    city_code: Optional[str] = "05001"
+    city_name: Optional[str] = "Medellín"
+    department_code: Optional[str] = "05"
+    department_name: Optional[str] = "Antioquia"
+    postal_code: Optional[str] = "050001"
+    country_code: Optional[str] = "CO"
+
+class CreatePrefacturaSchema(BaseModel):
+    organization_id: str
+    iva_rate: Optional[float] = None
+    payment_means_code: Optional[str] = "42"
+    payment_method_code: Optional[str] = "1"
+    due_days: Optional[int] = 15
+    notes: Optional[str] = None
+    client_profile: Optional[OrganizationBillingProfileSchema] = None
+
+
+@app.get("/billing/issuer-config", dependencies=[Depends(allow_super_admin)])
+def get_saas_issuer_config():
+    try:
+        res = supabase.table("saas_issuer_config").select("*").limit(1).execute()
+        if res and res.data:
+            return {"config": res.data[0]}
+        return {
+            "config": {
+                "business_name": "POSSAR SALES S.A.S.",
+                "trade_name": "POSSAR SALES",
+                "nit": "",
+                "dv": "",
+                "person_type": "1",
+                "tax_regime": "48",
+                "fiscal_responsibilities": "O-48",
+                "ciiu_code": "6201",
+                "address": "",
+                "city_code": "05631",
+                "city_name": "Sabaneta",
+                "department_code": "05",
+                "department_name": "Antioquia",
+                "postal_code": "055450",
+                "email": "",
+                "phone": "",
+                "dian_prefix": "FE",
+                "dian_environment": "2",
+                "is_active": True
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consultando configuración del emisor: {str(e)}")
+
+
+@app.put("/billing/issuer-config", dependencies=[Depends(allow_super_admin)])
+def upsert_saas_issuer_config(payload: SaaSIssuerConfigSchema):
+    try:
+        existing = supabase.table("saas_issuer_config").select("id").limit(1).execute()
+        data_dict = payload.dict()
+        if existing and existing.data:
+            issuer_id = existing.data[0]["id"]
+            res = supabase.table("saas_issuer_config").update(data_dict).eq("id", issuer_id).execute()
+        else:
+            res = supabase.table("saas_issuer_config").insert(data_dict).execute()
+        return {"success": True, "config": res.data[0] if res.data else data_dict}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error guardando configuración del emisor: {str(e)}")
+
+
+@app.put("/organizations/{org_id}/billing-profile", dependencies=[Depends(allow_super_admin)])
+def update_organization_billing_profile(org_id: str, profile: OrganizationBillingProfileSchema):
+    try:
+        update_data = {
+            "name": profile.name.strip(),
+            "nit": profile.nit.strip(),
+            "dv": (profile.dv or "").strip(),
+            "person_type": (profile.person_type or "1").strip(),
+            "tax_regime": (profile.tax_regime or "48").strip(),
+            "fiscal_responsibilities": (profile.fiscal_responsibilities or "R-99-PN").strip(),
+            "email": (profile.email or "").strip(),
+            "phone": (profile.phone or "").strip(),
+            "address": (profile.address or "").strip(),
+            "city_code": (profile.city_code or "05001").strip(),
+            "city_name": (profile.city_name or "Medellín").strip(),
+            "department_code": (profile.department_code or "05").strip(),
+            "department_name": (profile.department_name or "Antioquia").strip(),
+            "postal_code": (profile.postal_code or "050001").strip(),
+            "country_code": (profile.country_code or "CO").strip()
+        }
+        res = supabase.table("organizations").update(update_data).eq("id", org_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Organización no encontrada.")
+        return {"success": True, "organization": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error actualizando perfil fiscal de la organización: {str(e)}")
+
+
+@app.get("/billing/prefacturas", dependencies=[Depends(allow_super_admin)])
+def list_saas_prefacturas():
+    try:
+        res = supabase.table("saas_prefacturas").select("*").order("created_at", desc=True).execute()
+        return {"prefacturas": res.data or [], "data": res.data or []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consultando prefacturas: {str(e)}")
+
+
+@app.post("/billing/prefacturas", dependencies=[Depends(allow_super_admin)])
+def create_saas_prefactura(req: CreatePrefacturaSchema):
+    try:
+        org_res = supabase.table("organizations").select("*").eq("id", req.organization_id).limit(1).execute()
+        if not org_res.data:
+            raise HTTPException(status_code=404, detail="Organización no encontrada.")
+        org = org_res.data[0]
+
+        if req.client_profile:
+            profile_dict = {
+                "name": req.client_profile.name.strip(),
+                "nit": req.client_profile.nit.strip(),
+                "dv": (req.client_profile.dv or "").strip(),
+                "person_type": (req.client_profile.person_type or "1").strip(),
+                "tax_regime": (req.client_profile.tax_regime or "48").strip(),
+                "fiscal_responsibilities": (req.client_profile.fiscal_responsibilities or "R-99-PN").strip(),
+                "email": (req.client_profile.email or "").strip(),
+                "phone": (req.client_profile.phone or "").strip(),
+                "address": (req.client_profile.address or "").strip(),
+                "city_code": (req.client_profile.city_code or "05001").strip(),
+                "city_name": (req.client_profile.city_name or "Medellín").strip(),
+                "department_code": (req.client_profile.department_code or "05").strip(),
+                "department_name": (req.client_profile.department_name or "Antioquia").strip(),
+                "postal_code": (req.client_profile.postal_code or "050001").strip(),
+                "country_code": (req.client_profile.country_code or "CO").strip()
+            }
+            updated_org = supabase.table("organizations").update(profile_dict).eq("id", req.organization_id).execute()
+            if updated_org.data:
+                org = updated_org.data[0]
+
+        subs_res = supabase.table("company_subscriptions")\
+            .select("*")\
+            .eq("organization_id", req.organization_id)\
+            .order("id", desc=True)\
+            .execute()
+        subs = subs_res.data or []
+        sub = next((s for s in subs if s.get("is_active")), subs[0] if subs else None)
+        if not sub:
+            raise HTTPException(status_code=400, detail="La organización no tiene una suscripción registrada para emitir prefactura.")
+
+        plan_name_val = str(sub.get("plan_name") or "PLAN").strip()
+        plans_res = supabase.table("subscription_plans").select("*").execute()
+        plans = plans_res.data or []
+        matched_plan = next(
+            (p for p in plans if str(p.get("code", "")).upper() == plan_name_val.upper() or str(p.get("name", "")).upper() == plan_name_val.upper()),
+            None
+        )
+
+        credits_allocated = int(sub.get("credits_allocated") or 0)
+        credits_used = int(sub.get("credits_used") or 0)
+        excess_credits = max(0, credits_used - credits_allocated)
+        additional_credit_fee = float(matched_plan.get("additional_credit_fee") or 0.0) if matched_plan else 0.0
+        plan_base_amount = round(float(sub.get("monthly_fee") or 0.0), 2)
+        excess_amount = round(excess_credits * additional_credit_fee, 2)
+        subtotal_amount = round(plan_base_amount + excess_amount, 2)
+
+        issuer_res = supabase.table("saas_issuer_config").select("*").limit(1).execute()
+        issuer = issuer_res.data[0] if (issuer_res and issuer_res.data) else {
+            "business_name": "POSSAR SALES S.A.S.",
+            "trade_name": "POSSAR SALES",
+            "nit": "",
+            "dv": "",
+            "tax_regime": "48",
+            "fiscal_responsibilities": "O-48",
+            "address": "",
+            "city_code": "05631",
+            "city_name": "Sabaneta",
+            "department_code": "05",
+            "department_name": "Antioquia",
+            "email": ""
+        }
+
+        if req.iva_rate is not None:
+            iva_rate = float(req.iva_rate)
+        else:
+            iva_rate = 19.00 if str(issuer.get("tax_regime", "48")) == "48" else 0.00
+
+        iva_amount = round(subtotal_amount * (iva_rate / 100.0), 2)
+        total_amount = round(subtotal_amount + iva_amount, 2)
+
+        existing_prefs = supabase.table("saas_prefacturas").select("id").execute()
+        next_seq = len(existing_prefs.data or []) + 1
+        prefactura_number = f"PREF-{next_seq:04d}"
+
+        period_start = str(sub.get("start_date") or date.today().replace(day=1).isoformat())[:10]
+        period_end = str(sub.get("end_date") or date.today().isoformat())[:10]
+        due_dt = (date.today() + timedelta(days=int(req.due_days or 15))).isoformat()
+
+        prefactura_payload = {
+            "prefactura_number": prefactura_number,
+            "organization_id": org["id"],
+            "subscription_id": sub["id"],
+            "client_name": org.get("name", ""),
+            "client_nit": org.get("nit", ""),
+            "client_dv": org.get("dv") or "",
+            "client_email": org.get("email") or "",
+            "client_address": org.get("address") or "",
+            "client_city_code": org.get("city_code") or "05001",
+            "client_tax_regime": org.get("tax_regime") or "48",
+            "client_fiscal_responsibilities": org.get("fiscal_responsibilities") or "R-99-PN",
+            "billing_period_start": period_start,
+            "billing_period_end": period_end,
+            "plan_code": matched_plan.get("code") if matched_plan else plan_name_val,
+            "plan_name": matched_plan.get("name") if matched_plan else plan_name_val,
+            "credits_allocated": credits_allocated,
+            "credits_used": credits_used,
+            "excess_credits": excess_credits,
+            "additional_credit_fee": additional_credit_fee,
+            "plan_base_amount": plan_base_amount,
+            "excess_amount": excess_amount,
+            "subtotal_amount": subtotal_amount,
+            "iva_rate": iva_rate,
+            "iva_amount": iva_amount,
+            "total_amount": total_amount,
+            "currency": "COP",
+            "payment_means_code": req.payment_means_code or "42",
+            "payment_method_code": req.payment_method_code or "1",
+            "due_date": due_dt,
+            "notes": req.notes or f"Servicio SaaS de causación electrónica DIAN y exportación Multi-ERP ({plan_name_val}).",
+            "status": "PREFACTURA"
+        }
+
+        ins_res = supabase.table("saas_prefacturas").insert(prefactura_payload).execute()
+        created_pref = ins_res.data[0] if ins_res.data else prefactura_payload
+
+        return {
+            "success": True,
+            "prefactura": created_pref,
+            "issuer": issuer,
+            "client": org
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error generando prefactura: {str(e)}")
 
 # --- GESTIÓN DE USUARIOS CON JERARQUÍA ESTRICTA ---
 
