@@ -212,12 +212,14 @@ export default function SaaSApplication() {
   const [showUnspscForm, setShowUnspscForm] = useState(false);
   const [editingUnspscId, setEditingUnspscId] = useState<string | null>(null);
   const [unspscFormData, setUnspscFormData] = useState({
-    code: "",
-    description: "",
-    category_type: "COMPRA",
-    suggested_puc_account: ""
-  });
-  
+     code: "",
+     description: "",
+     category_type: "COMPRA",
+     suggested_puc_account: "",
+     tipo_documento: "01" as "01" | "91" | "92",
+     suggested_tipmov: "D" as "D" | "C"
+   });
+   
   // --- ESTADO FACTURACIÓN SAAS (SUPER_ADMIN) ---
   const [billingKpis, setBillingKpis] = useState({
     total_organizations: 0,
@@ -266,12 +268,15 @@ export default function SaaSApplication() {
   const [showParamForm, setShowParamForm] = useState(false);
   const [editingParamId, setEditingParamId] = useState<string | null>(null);
   const [accountingParamsList, setAccountingParamsList] = useState<AccountingParameter[]>([]);
+  const [selectedParamDocType, setSelectedParamDocType] = useState<"01" | "91" | "92">("01");
+  const [selectedUnspscDocType, setSelectedUnspscDocType] = useState<"01" | "91" | "92">("01");
   const [paramFormData, setParamFormData] = useState({
     concept_code: "",
     concept_name: "",
     account_puc: "",
     account_name: "",
-    nature: "D" as "D" | "C"
+    nature: "D" as "D" | "C",
+    tipo_documento: "01" as "01" | "91" | "92"
   });
   const [paramSearchFilter, setParamSearchFilter] = useState("");
 
@@ -292,7 +297,9 @@ export default function SaaSApplication() {
 
   // --- EXPORTACIÓN ERP ---
   const [selectedErp, setSelectedErp] = useState("siigo");
-
+  const [exportDocType, setExportDocType] = useState<"01" | "91" | "92">("01");
+  const [exportVoucherNumber, setExportVoucherNumber] = useState<string>("");
+  
   // --- CARGA PÚBLica DE ORGANIZACIONES PARA LOGIN ---
   const loadPublicOrganizations = async () => {
     try {
@@ -353,7 +360,13 @@ export default function SaaSApplication() {
           const dataParams = await resParams.json();
           setAccountingParamsList(dataParams.data || dataParams.parameters || []);
         }
-
+		
+		const resUnspsc = await fetch(`${API_BASE}/unspsc-master`, { headers });
+        if (resUnspsc.ok) {
+          const dataUnspsc = await resUnspsc.json();
+          setUnspscMasterList(dataUnspsc.data || dataUnspsc.unspsc || []);
+        }
+		
         const resEmails = await fetch(`${API_BASE}/email-integrations`, { headers });
         if (resEmails.ok) {
           const dataEmails = await resEmails.json();
@@ -592,11 +605,22 @@ export default function SaaSApplication() {
 
   const handleCausarBatch = async () => {
     if (selectedInvoiceIds.length === 0) {
-      alert("Seleccione al menos una factura en estado PARSEADO.");
+      alert("Seleccione al menos una factura.");
       return;
     }
+
+    // Validación única al hacer clic en Causar: verificar que los seleccionados estén PARSEADO
+    const selectedInvoices = invoicesList.filter((inv) => selectedInvoiceIds.includes(inv.id));
+    const invalidInvoices = selectedInvoices.filter((inv) => (inv.status || "").toUpperCase() !== "PARSEADO");
+
+    if (invalidInvoices.length > 0) {
+      alert(`Acción denegada: Hay ${invalidInvoices.length} factura(s) seleccionada(s) que NO están en estado PARSEADO.`);
+      return;
+    }
+
     setIsCausing(true);
     const token = localStorage.getItem("access_token") || "";
+	
     try {
       const res = await fetch(`${API_BASE}/causar-masivo`, {
         method: "POST",
@@ -631,6 +655,63 @@ export default function SaaSApplication() {
       setIsCausing(false);
     }
   };
+  
+  const handleDownloadErpPlan = async () => {
+    const orgId = currentUser?.organization_id;
+    if (!orgId) {
+      alert("Error: No se encontró una organización activa en la sesión.");
+      return;
+    }
+
+    const voucherClean = exportVoucherNumber.trim();
+    if (!voucherClean) {
+      alert("Debe ingresar el número o código de comprobante que usa la empresa antes de exportar.");
+      return;
+    }
+
+    const token = localStorage.getItem("access_token") || "";
+
+    try {
+      const params = new URLSearchParams({
+        tipo_documento: exportDocType,
+        comprobante: voucherClean
+      });
+
+      const response = await fetch(`${API_BASE}/export/${selectedErp}/${orgId}?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || "Error al generar el archivo plano.");
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `Importacion_${selectedErp}_${exportDocType}_${orgId.slice(0, 8)}`;
+
+      if (contentDisposition && contentDisposition.includes("filename=")) {
+        const matches = contentDisposition.match(/filename=(.+)/);
+        if (matches && matches[1]) {
+          filename = matches[1].replace(/['"]/g, "").trim();
+        }
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert("No se pudo descargar el plano: " + err.message);
+    }
+  };
+  
 
   const toggleSelectInvoice = (id: string) => {
     setSelectedInvoiceIds((prev) =>
@@ -870,11 +951,16 @@ export default function SaaSApplication() {
   // ============================================================================
   const handleSaveAccountingParam = async (e: React.FormEvent) => {
     e.preventDefault();
+    const activeDocType = selectedParamDocType;
+    if (!activeDocType) {
+      alert("Primero debes filtrar y seleccionar el tipo de documento (01, 91 o 92).");
+      return;
+    }
     const token = localStorage.getItem("access_token") || "";
 
     try {
       const url = editingParamId
-        ? `${API_BASE}/accounting-parameters/${editingParamId}`
+        ? `${API_BASE}/accounting-parameters/${editingParamId}?tipo_documento=${activeDocType}`
         : `${API_BASE}/accounting-parameters`;
       const method = editingParamId ? "PUT" : "POST";
 
@@ -886,10 +972,11 @@ export default function SaaSApplication() {
         },
         body: JSON.stringify({
           ...paramFormData,
+          tipo_documento: activeDocType,
           organization_id: currentUser?.organization_id
         })
       });
-
+	  
       const data = await res.json();
       if (res.ok) {
         alert(editingParamId ? "¡Parámetro contable actualizado!" : "¡Parámetro contable creado!");
@@ -912,25 +999,29 @@ export default function SaaSApplication() {
   };
 
   const handleEditAccountingParam = (p: AccountingParameter) => {
+    const docType = ((p as any).tipo_documento || selectedParamDocType) as "01" | "91" | "92";
+    setSelectedParamDocType(docType);
     setEditingParamId(p.id);
     setParamFormData({
       concept_code: p.concept_code,
       concept_name: p.concept_name || "",
       account_puc: p.account_puc,
       account_name: p.account_name,
-      nature: p.nature
+      nature: p.nature,
+      tipo_documento: docType
     });
     setShowParamForm(true);
   };
 
   const handleDeleteAccountingParam = async (paramId: string, code: string) => {
-    if (!confirm(`¿Seguro que deseas eliminar el parámetro contable "${code}"?`)) return;
+    const activeDocType = selectedParamDocType;
+    if (!confirm(`¿Seguro que deseas eliminar el parámetro contable "${code}" del tipo de documento ${activeDocType}?`)) return;
     const token = localStorage.getItem("access_token") || "";
     try {
-      const res = await fetch(`${API_BASE}/accounting-parameters/${paramId}`, {
+      const res = await fetch(`${API_BASE}/accounting-parameters/${paramId}?tipo_documento=${activeDocType}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
-      });
+      });	  
       if (res.ok) {
         alert("Parámetro contable eliminado.");
         loadAllMaintenanceTables(token, currentUser?.role);
@@ -1274,10 +1365,11 @@ export default function SaaSApplication() {
 
   const filteredParams = accountingParamsList.filter(
     (p) =>
-      p.concept_code.toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
-      (p.concept_name || "").toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
-      p.account_puc.includes(paramSearchFilter) ||
-      p.account_name.toLowerCase().includes(paramSearchFilter.toLowerCase())
+      ((p as any).tipo_documento || "01") === selectedParamDocType &&
+      (p.concept_code.toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
+        (p.concept_name || "").toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
+        p.account_puc.includes(paramSearchFilter) ||
+        p.account_name.toLowerCase().includes(paramSearchFilter.toLowerCase()))
   );
 
   const creditsRemaining = orgSubscription
@@ -1449,7 +1541,7 @@ export default function SaaSApplication() {
                       </p>
                     </div>
                   </div>
-                  {isSuperAdmin && (
+                  {canManageTenantTables && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1551,13 +1643,32 @@ export default function SaaSApplication() {
               {/* BANDEJA DE FACTURAS CARGADAS Y CONTROLES DE CAUSACIÓN */}
               <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                 <div className="p-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                  
+				  <div className="p-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-sm font-bold text-white">
                       Bandeja de Facturas Electrónicas DIAN ({invoicesList.length})
                     </h3>
-                    <p className="text-xs text-slate-400">
-                      Seleccione las facturas en estado PARSEADO para imputarlas contablemente.
+                    <p className="text-xs text-slate-400 mb-2">
+                      Seleccione las facturas para imputarlas contablemente.
                     </p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedInvoiceIds(invoicesList.map((i) => i.id))}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 underline cursor-pointer font-medium"
+                      >
+                        ☑ Seleccionar todas las filas
+                      </button>
+                      <span className="text-slate-600">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedInvoiceIds([])}
+                        className="text-xs text-slate-400 hover:text-slate-300 underline cursor-pointer font-medium"
+                      >
+                        ☒ Deseleccionar todas
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-3">
@@ -1585,6 +1696,8 @@ export default function SaaSApplication() {
                     </button>
                   </div>
                 </div>
+				  
+                </div>
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs text-slate-300">
@@ -1594,22 +1707,16 @@ export default function SaaSApplication() {
                         <th className="px-4 py-3.5 w-10">
                           <input
                             type="checkbox"
-                            checked={
-                              invoicesList.filter(i => i.status === "PARSEADO").length > 0 &&
-                              selectedInvoiceIds.length === invoicesList.filter(i => i.status === "PARSEADO").length
-                            }
+                            checked={invoicesList.length > 0 && selectedInvoiceIds.length === invoicesList.length}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                const parseadasIds = invoicesList
-                                  .filter(i => i.status === "PARSEADO")
-                                  .map(i => i.id);
-                                setSelectedInvoiceIds(parseadasIds);
+                                setSelectedInvoiceIds(invoicesList.map((i) => i.id));
                               } else {
                                 setSelectedInvoiceIds([]);
                               }
                             }}
                             className="w-4 h-4 rounded bg-slate-950 border-slate-700 cursor-pointer text-blue-600 focus:ring-blue-500"
-                            title="Seleccionar todas las parseadas"
+                            title="Seleccionar todos"
                           />
                         </th>
                         <th className="px-4 py-3.5">Número</th>    
@@ -1635,7 +1742,6 @@ export default function SaaSApplication() {
                               <input
                                 type="checkbox"
                                 checked={selectedInvoiceIds.includes(inv.id)}
-                                disabled={inv.status !== "PARSEADO"}
                                 onChange={(e) => {
                                   if (e.target.checked) {
                                     setSelectedInvoiceIds([...selectedInvoiceIds, inv.id]);
@@ -1643,9 +1749,10 @@ export default function SaaSApplication() {
                                     setSelectedInvoiceIds(selectedInvoiceIds.filter(id => id !== inv.id));
                                   }
                                 }}
-                                className="w-4 h-4 rounded bg-slate-950 border-slate-700 cursor-pointer text-blue-600 focus:ring-blue-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                                className="w-4 h-4 rounded bg-slate-950 border-slate-700 cursor-pointer text-blue-600 focus:ring-blue-500"
                               />
                             </td>
+							
 							<td className="px-4 py-3.5 font-mono font-bold text-white">
                               {inv.full_number}
                             </td>
@@ -2613,6 +2720,20 @@ export default function SaaSApplication() {
                     </div>
 
                     <div className="flex items-center gap-3">
+                      <select
+                        value={selectedParamDocType}
+                        onChange={(e) => {
+                          const docType = e.target.value as "01" | "91" | "92";
+                          setSelectedParamDocType(docType);
+                          setEditingParamId(null);
+                          setShowParamForm(false);
+                        }}
+                        className="bg-slate-900 border border-indigo-500/40 rounded-xl px-3 py-2 text-xs text-white font-semibold focus:outline-none"
+                      >
+                        <option value="01">Tipo Doc: 01 - Factura</option>
+                        <option value="91">Tipo Doc: 91 - Nota Crédito</option>
+                        <option value="92">Tipo Doc: 92 - Nota Débito</option>
+                      </select>
                       <input
                         type="text"
                         placeholder="Buscar código, PUC o descripción..."
@@ -2629,10 +2750,11 @@ export default function SaaSApplication() {
                             concept_name: "",
                             account_puc: "",
                             account_name: "",
-                            nature: "D"
+                            nature: selectedParamDocType === "91" ? "C" : "D",
+                            tipo_documento: selectedParamDocType
                           });
                           setShowParamForm(!showParamForm);
-                        }}
+                        }}	
                         className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
                       >
                         <Plus className="w-4 h-4" />
@@ -2652,7 +2774,26 @@ export default function SaaSApplication() {
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">
-                              Código Concepto DIAN
+                              Tipo de Documento DIAN
+                            </label>
+                            <select
+                              value={paramFormData.tipo_documento}
+                              onChange={(e) =>
+                                setParamFormData({
+                                  ...paramFormData,
+                                  tipo_documento: e.target.value as "01" | "91" | "92"
+                                })
+                              }
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                            >
+                              <option value="01">01 - Factura Electrónica</option>
+                              <option value="91">91 - Nota Crédito</option>
+                              <option value="92">92 - Nota Débito</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">
+                              Código de Concepto
                             </label>
                             <input
                               type="text"
@@ -2661,21 +2802,6 @@ export default function SaaSApplication() {
                               value={paramFormData.concept_code}
                               onChange={(e) =>
                                 setParamFormData({ ...paramFormData, concept_code: e.target.value })
-                              }
-                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-slate-400 mb-1">
-                              Cuenta PUC
-                            </label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="Ej: 23654025"
-                              value={paramFormData.account_puc}
-                              onChange={(e) =>
-                                setParamFormData({ ...paramFormData, account_puc: e.target.value })
                               }
                               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                             />
@@ -2754,7 +2880,6 @@ export default function SaaSApplication() {
                       </form>
                     </div>
                   )}
-
                   <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-xs text-slate-300">
                       <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
@@ -3016,7 +3141,6 @@ export default function SaaSApplication() {
                       </form>
                     </div>
                   )}
-
                   <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-xs text-slate-300">
                       <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
@@ -3305,7 +3429,6 @@ export default function SaaSApplication() {
                       </form>
                     </div>
                   )}
-
                   <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-xs text-slate-300">
                       <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
@@ -3586,30 +3709,56 @@ export default function SaaSApplication() {
                 </div>
               )}
 
-              {/* 8. CATÁLOGO UNSPSC (SOLO SUPER_ADMIN) */}
-              {maintenanceSubTab === "unspsc" && isSuperAdmin && (
+              {/* 8. CATÁLOGO UNSPSC (SUPER_ADMIN Y COMPANY_ADMIN) */}
+              {maintenanceSubTab === "unspsc" && canManageTenantTables && (
                 <div className="space-y-4">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-wrap justify-between items-center gap-3">
                     <h3 className="text-sm font-semibold text-slate-300">
-                      Maestro Global UNSPSC & Cuentas PUC Sugeridas ({unspscMasterList.length} códigos)
+                      Maestro Global UNSPSC & Cuentas PUC Sugeridas (
+                      {
+                        unspscMasterList.filter(
+                          (u) => ((u as any).tipo_documento || "01") === selectedUnspscDocType
+                        ).length
+                      }{" "}
+                      códigos)
                     </h3>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingUnspscId(null);
-                        setUnspscFormData({
-                          code: "",
-                          description: "",
-                          category_type: "COMPRA",
-                          suggested_puc_account: ""
-                        });
-                        setShowUnspscForm(!showUnspscForm);
-                      }}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>{showUnspscForm ? "Cerrar Formulario" : "Nuevo Código UNSPSC"}</span>
-                    </button>
+
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={selectedUnspscDocType}
+                        onChange={(e) => {
+                          const docType = e.target.value as "01" | "91" | "92";
+                          setSelectedUnspscDocType(docType);
+                          setEditingUnspscId(null);
+                          setShowUnspscForm(false);
+                        }}
+                        className="bg-slate-900 border border-indigo-500/40 rounded-xl px-3 py-2 text-xs text-white font-semibold focus:outline-none"
+                      >
+                        <option value="01">Tipo Doc: 01 - Factura</option>
+                        <option value="91">Tipo Doc: 91 - Nota Crédito</option>
+                        <option value="92">Tipo Doc: 92 - Nota Débito</option>
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingUnspscId(null);
+                          setUnspscFormData({
+                            code: "",
+                            description: "",
+                            category_type: "COMPRA",
+                            suggested_puc_account: "",
+                            tipo_documento: selectedUnspscDocType,
+                            suggested_tipmov: selectedUnspscDocType === "91" ? "C" : "D"
+                          });
+                          setShowUnspscForm(!showUnspscForm);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>{showUnspscForm ? "Cerrar Formulario" : "Nuevo Código UNSPSC"}</span>
+                      </button>
+                    </div>
                   </div>
 
                   {showUnspscForm && (
@@ -3621,25 +3770,42 @@ export default function SaaSApplication() {
                         onSubmit={async (e) => {
                           e.preventDefault();
                           const token = localStorage.getItem("access_token") || "";
-                          const url = editingUnspscId ? `${API_BASE}/unspsc-master/${editingUnspscId}` : `${API_BASE}/unspsc-master`;
+                          const url = editingUnspscId
+                            ? `${API_BASE}/unspsc-master/${editingUnspscId}?tipo_documento=${selectedUnspscDocType}`
+                            : `${API_BASE}/unspsc-master`;
                           const method = editingUnspscId ? "PUT" : "POST";
                           const res = await fetch(url, {
                             method,
                             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                            body: JSON.stringify(unspscFormData)
+                            body: JSON.stringify({
+                              ...unspscFormData,
+                              tipo_documento: selectedUnspscDocType
+                            })
                           });
                           if (res.ok) {
                             alert("¡Operación exitosa en maestro UNSPSC!");
                             setShowUnspscForm(false);
                             setEditingUnspscId(null);
-                            loadAllMaintenanceTables(token, "SUPER_ADMIN");
+							loadAllMaintenanceTables(token, currentUser?.role || "COMPANY_ADMIN");
                           } else {
                             alert("Error guardando UNSPSC");
                           }
                         }}
                         className="space-y-4"
                       >
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Tipo de Documento DIAN</label>
+                            <select
+                              value={unspscFormData.tipo_documento}
+                              onChange={(e) => setUnspscFormData({ ...unspscFormData, tipo_documento: e.target.value as "01" | "91" | "92" })}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                            >
+                              <option value="01">01 - Factura (Compra)</option>
+                              <option value="91">91 - Nota Crédito (Devolución)</option>
+                              <option value="92">92 - Nota Débito (Mayor valor)</option>
+                            </select>
+                          </div>
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">Código UNSPSC</label>
                             <input
@@ -3651,6 +3817,19 @@ export default function SaaSApplication() {
                               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                             />
                           </div>
+                          <div>
+                            <label className="block text-xs text-slate-400 mb-1">Naturaleza Movimiento (tipmov)</label>
+                            <select
+                              value={unspscFormData.suggested_tipmov}
+                              onChange={(e) => setUnspscFormData({ ...unspscFormData, suggested_tipmov: e.target.value as "D" | "C" })}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono font-semibold text-emerald-400"
+                            >
+                              <option value="D">D - Débito (Gasto/Inventario)</option>
+                              <option value="C">C - Crédito (Reversión/Devolución)</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">  
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">Categoría / Naturaleza</label>
                             <select
@@ -3686,7 +3865,6 @@ export default function SaaSApplication() {
                             />
                           </div>
                         </div>
-
                         <div className="flex justify-end gap-2 pt-2">
                           <button
                             type="button"
@@ -3700,7 +3878,7 @@ export default function SaaSApplication() {
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-xs text-white font-semibold rounded-xl cursor-pointer"
                           >
                             {editingUnspscId ? "Actualizar UNSPSC" : "Guardar UNSPSC"}
-                          </button>
+					      </button>
                         </div>
                       </form>
                     </div>
@@ -3718,14 +3896,16 @@ export default function SaaSApplication() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
-                        {unspscMasterList.length === 0 ? (
+                        {unspscMasterList.filter((u) => ((u as any).tipo_documento || "01") === selectedUnspscDocType).length === 0 ? (
                           <tr>
                             <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
-                              No hay códigos UNSPSC registrados en la base de datos global.
+                              No hay códigos UNSPSC registrados para el tipo de documento {selectedUnspscDocType}.
                             </td>
                           </tr>
                         ) : (
-                          unspscMasterList.map((item) => (
+                          unspscMasterList
+                            .filter((u) => ((u as any).tipo_documento || "01") === selectedUnspscDocType)
+                            .map((item) => (
                             <tr key={item.id} className="hover:bg-slate-800/30">
                               <td className="px-5 py-4 font-mono font-bold text-indigo-400">{item.code}</td>
                               <td className="px-5 py-4 text-white">{item.description}</td>
@@ -3739,12 +3919,16 @@ export default function SaaSApplication() {
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    const itemDocType = ((item as any).tipo_documento || selectedUnspscDocType) as "01" | "91" | "92";
+                                    setSelectedUnspscDocType(itemDocType);
                                     setEditingUnspscId(item.id);
                                     setUnspscFormData({
                                       code: item.code,
                                       description: item.description,
                                       category_type: item.category_type || "COMPRA",
-                                      suggested_puc_account: item.suggested_puc_account
+                                      suggested_puc_account: item.suggested_puc_account,
+                                      tipo_documento: itemDocType,
+                                      suggested_tipmov: (item.suggested_tipmov as "D" | "C") || (itemDocType === "91" ? "C" : "D")
                                     });
                                     setShowUnspscForm(true);
                                   }}
@@ -3756,15 +3940,15 @@ export default function SaaSApplication() {
                                 <button
                                   type="button"
                                   onClick={async () => {
-                                    if (!confirm(`¿Seguro que deseas eliminar el UNSPSC ${item.code}?`)) return;
+                                    if (!confirm(`¿Seguro que deseas eliminar el UNSPSC ${item.code} del tipo ${selectedUnspscDocType}?`)) return;
                                     const token = localStorage.getItem("access_token") || "";
-                                    const res = await fetch(`${API_BASE}/unspsc-master/${item.id}`, {
+                                    const res = await fetch(`${API_BASE}/unspsc-master/${item.id}?tipo_documento=${selectedUnspscDocType}`, {
                                       method: "DELETE",
                                       headers: { Authorization: `Bearer ${token}` }
                                     });
-                                    if (res.ok) {
+									if (res.ok) {
                                       alert("Eliminado correctamente.");
-                                      loadAllMaintenanceTables(token, "SUPER_ADMIN");
+                                      loadAllMaintenanceTables(token, currentUser?.role || "COMPANY_ADMIN");
                                     }
                                   }}
                                   title="Eliminar"
@@ -3794,12 +3978,11 @@ export default function SaaSApplication() {
                   Centro de Exportación Masiva a ERPs
                 </h2>
                 <p className="text-sm text-slate-400">
-                  Descarga de planos contables compatibles con las principales plataformas del
-                  mercado.
+                  Descarga de planos contables separados por tipo de documento con el comprobante de la empresa.
                 </p>
               </div>
 
-              <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 flex items-center justify-between">
+              <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 space-y-5">
                 <div className="flex items-center space-x-4">
                   <FileOutput className="w-8 h-8 text-indigo-400" />
                   <div>
@@ -3807,28 +3990,65 @@ export default function SaaSApplication() {
                       Exportar Movimientos Contables Causados
                     </h4>
                     <p className="text-xs text-slate-400">
-                      Seleccione el software contable de destino para estructurar las partidas
-                      dobles.
+                      Seleccione el tipo de documento, indique el número/código de comprobante y elija el ERP destino.
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center space-x-3">
-                  <select
-                    value={selectedErp}
-                    onChange={(e) => setSelectedErp(e.target.value)}
-                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="siigo">Siigo Nube (.xlsx)</option>
-                    <option value="helisa">Helisa (.csv)</option>
-                    <option value="loggro">Loggro (.xlsx)</option>
-                    <option value="syscafe">SysCafé (.txt)</option>
-                    <option value="alegra">Alegra (.xlsx)</option>
-                    <option value="world_office">World Office (.xlsx)</option>
-                  </select>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      Tipo de Documento
+                    </label>
+                    <select
+                      value={exportDocType}
+                      onChange={(e) => setExportDocType(e.target.value as "01" | "91" | "92")}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="01">01 - Factura Electrónica</option>
+                      <option value="91">91 - Nota Crédito</option>
+                      <option value="92">92 - Nota Débito</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      Número / Código de Comprobante
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej: 01, CB-01, NC-01..."
+                      value={exportVoucherNumber}
+                      onChange={(e) => setExportVoucherNumber(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      ERP de Destino
+                    </label>
+                    <select
+                      value={selectedErp}
+                      onChange={(e) => setSelectedErp(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="siigo">Siigo Nube (.xlsx)</option>
+                      <option value="helisa">Helisa (.csv)</option>
+                      <option value="loggro">Loggro (.xlsx)</option>
+                      <option value="syscafe">SysCafé (.txt)</option>
+                      <option value="alegra">Alegra (.xlsx)</option>
+                      <option value="world_office">World Office (.xlsx)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => alert(`Generando descarga para ${selectedErp.toUpperCase()}...`)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
+                    onClick={handleDownloadErpPlan}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
                     <span>Descargar Plano</span>

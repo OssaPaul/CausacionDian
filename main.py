@@ -6,7 +6,7 @@ import traceback
 from datetime import date, timedelta
 from typing import Optional, Dict, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Query, status, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -251,6 +251,7 @@ class AccountingParameterSchema(BaseModel):
     account_puc: str
     account_name: str
     nature: str  # 'D' o 'C'
+    tipo_documento: str = "01"  # '01', '91', '92'
     organization_id: Optional[str] = None
 
 class UnspscSchema(BaseModel):
@@ -258,6 +259,8 @@ class UnspscSchema(BaseModel):
     description: str
     category_type: str  # COMPRA, GASTO, COSTO
     suggested_puc_account: str
+    tipo_documento: str = "01"  # '01', '91', '92'
+    suggested_tipmov: str = "D"  # 'D' o 'C'
 
 class EmailConfigSchema(BaseModel):
     organization_id: Optional[str] = None
@@ -774,15 +777,16 @@ def delete_sub_user(user_id: str, current_user: dict = Depends(get_current_user)
 # --- GESTIÓN DE PARÁMETROS CONTABLES PUC / DIAN (SUPER_ADMIN Y COMPANY_ADMIN) ---
 
 @app.get("/accounting-parameters", dependencies=[Depends(allow_company_admin)])
-def list_accounting_parameters(current_user: dict = Depends(get_current_user)):
+def list_accounting_parameters(tipo_documento: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     active_org_id = current_user.get("organization_id")
     if not active_org_id:
         return {"parameters": [], "data": []}
-    res = supabase.table("company_accounting_parameters")\
+    query = supabase.table("company_accounting_parameters")\
         .select("*")\
-        .eq("organization_id", active_org_id)\
-        .order("concept_code")\
-        .execute()
+        .eq("organization_id", active_org_id)
+    if tipo_documento and tipo_documento != "ALL":
+        query = query.eq("tipo_documento", tipo_documento.strip())
+    res = query.order("concept_code").execute()
     return {"parameters": res.data or [], "data": res.data or []}
 
 @app.post("/accounting-parameters", dependencies=[Depends(allow_company_admin)])
@@ -790,9 +794,13 @@ def create_accounting_parameter(param: AccountingParameterSchema, current_user: 
     target_org = current_user.get("organization_id") or param.organization_id
     if not target_org:
         raise HTTPException(status_code=422, detail="Relación requerida: organization_id es obligatorio.")
+    doc_type = (param.tipo_documento or "").strip()
+    if doc_type not in ("01", "91", "92"):
+        raise HTTPException(status_code=422, detail="Debe filtrar/seleccionar un tipo_documento válido ('01', '91' o '92') antes de insertar.")
 
     payload = {
         "organization_id": target_org,
+        "tipo_documento": doc_type,
         "concept_code": param.concept_code.upper().strip(),
         "concept_name": param.concept_name.strip(),
         "account_puc": param.account_puc.strip(),
@@ -806,47 +814,62 @@ def create_accounting_parameter(param: AccountingParameterSchema, current_user: 
         raise HTTPException(status_code=500, detail=f"Error creando parámetro contable: {str(e)}")
 
 @app.put("/accounting-parameters/{param_id}", dependencies=[Depends(allow_company_admin)])
-def update_accounting_parameter(param_id: str, param: AccountingParameterSchema):
+def update_accounting_parameter(param_id: str, param: AccountingParameterSchema, tipo_documento: Optional[str] = None):
+    doc_type = (param.tipo_documento or tipo_documento or "").strip()
+    if doc_type not in ("01", "91", "92"):
+        raise HTTPException(status_code=422, detail="Debe filtrar/seleccionar un tipo_documento válido ('01', '91' o '92') antes de modificar.")
     try:
         res = supabase.table("company_accounting_parameters").update({
+            "tipo_documento": doc_type,
             "concept_code": param.concept_code.upper().strip(),
             "concept_name": param.concept_name.strip(),
             "account_puc": param.account_puc.strip(),
             "account_name": param.account_name.strip(),
             "nature": param.nature.upper().strip()
-        }).eq("id", param_id).execute()
+        }).eq("id", param_id).eq("tipo_documento", doc_type).execute()
         return {"success": True, "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error actualizando parámetro contable: {str(e)}")
 
 @app.delete("/accounting-parameters/{param_id}", dependencies=[Depends(allow_company_admin)])
-def delete_accounting_parameter(param_id: str):
+def delete_accounting_parameter(param_id: str, tipo_documento: Optional[str] = None):
     try:
-        supabase.table("company_accounting_parameters").delete().eq("id", param_id).execute()
+        query = supabase.table("company_accounting_parameters").delete().eq("id", param_id)
+        if tipo_documento and tipo_documento != "ALL":
+            query = query.eq("tipo_documento", tipo_documento.strip())
+        query.execute()
         return {"success": True, "message": "Parámetro contable eliminado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error eliminando parámetro contable: {str(e)}")
-
+        
 # ============================================================================
 # GESTIÓN DE CÓDIGOS UNSPSC Y CUENTAS SUGERIDAS (MAESTRO GLOBAL)
 # ============================================================================
 
 @app.get("/unspsc-master", dependencies=[Depends(allow_company_admin)])
-def list_unspsc_master():
+def list_unspsc_master(tipo_documento: Optional[str] = None):
     try:
-        res = supabase.table("unspsc").select("*").order("code").execute()
+        query = supabase.table("unspsc").select("*")
+        if tipo_documento and tipo_documento != "ALL":
+            query = query.eq("tipo_documento", tipo_documento.strip())
+        res = query.order("code").execute()
         return {"data": res.data or [], "unspsc": res.data or []}
     except Exception as e:
         return {"data": [], "unspsc": []}
 
 @app.post("/unspsc-master", dependencies=[Depends(allow_super_admin)])
 def create_unspsc_item(item: UnspscSchema):
+    doc_type = (item.tipo_documento or "").strip()
+    if doc_type not in ("01", "91", "92"):
+        raise HTTPException(status_code=422, detail="Debe filtrar/seleccionar un tipo_documento válido ('01', '91' o '92') antes de insertar en UNSPSC.")
     try:
         payload = {
+            "tipo_documento": doc_type,
             "code": item.code.strip(),
             "description": item.description.strip(),
             "category_type": item.category_type.upper().strip(),
-            "suggested_puc_account": item.suggested_puc_account.strip()
+            "suggested_puc_account": item.suggested_puc_account.strip(),
+            "suggested_tipmov": (item.suggested_tipmov or ("C" if doc_type == "91" else "D")).upper().strip()
         }
         res = supabase.table("unspsc").insert(payload).execute()
         return {"success": True, "message": "Código UNSPSC registrado exitosamente", "data": res.data}
@@ -854,27 +877,34 @@ def create_unspsc_item(item: UnspscSchema):
         raise HTTPException(status_code=500, detail=f"Error registrando UNSPSC: {str(e)}")
 
 @app.put("/unspsc-master/{item_id}", dependencies=[Depends(allow_super_admin)])
-def update_unspsc_item(item_id: str, item: UnspscSchema):
+def update_unspsc_item(item_id: str, item: UnspscSchema, tipo_documento: Optional[str] = None):
+    doc_type = (item.tipo_documento or tipo_documento or "").strip()
+    if doc_type not in ("01", "91", "92"):
+        raise HTTPException(status_code=422, detail="Debe filtrar/seleccionar un tipo_documento válido ('01', '91' o '92') antes de modificar UNSPSC.")
     try:
         payload = {
+            "tipo_documento": doc_type,
             "code": item.code.strip(),
             "description": item.description.strip(),
             "category_type": item.category_type.upper().strip(),
-            "suggested_puc_account": item.suggested_puc_account.strip()
+            "suggested_puc_account": item.suggested_puc_account.strip(),
+            "suggested_tipmov": (item.suggested_tipmov or ("C" if doc_type == "91" else "D")).upper().strip()
         }
-        res = supabase.table("unspsc").update(payload).eq("id", item_id).execute()
+        res = supabase.table("unspsc").update(payload).eq("id", item_id).eq("tipo_documento", doc_type).execute()
         return {"success": True, "message": "Código UNSPSC actualizado", "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error actualizando UNSPSC: {str(e)}")
 
 @app.delete("/unspsc-master/{item_id}", dependencies=[Depends(allow_super_admin)])
-def delete_unspsc_item(item_id: str):
+def delete_unspsc_item(item_id: str, tipo_documento: Optional[str] = None):
     try:
-        supabase.table("unspsc").delete().eq("id", item_id).execute()
+        query = supabase.table("unspsc").delete().eq("id", item_id)
+        if tipo_documento and tipo_documento != "ALL":
+            query = query.eq("tipo_documento", tipo_documento.strip())
+        query.execute()
         return {"success": True, "message": "Código UNSPSC eliminado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error eliminando UNSPSC: {str(e)}")
-
 
 # --- GESTIÓN CRUD COMPLETO DE INTEGRACIONES DE CORREO IMAP (company_email_integrations) ---
 
@@ -1161,62 +1191,92 @@ def _execute_single_invoice_causation(invoice_id: str, grouping_mode: GroupingMo
     # Validar suscripción y cupo disponible
     sub = validate_organization_subscription(org_id, require_available_credit=True)
 
-    # 1. Cargar parámetros contables de la organización
+    doc_type = str(invoice.get("document_type") or invoice.get("tipo_documento") or "01").strip()
+
+    # 1. Cargar parámetros contables de la organización conservando tipo_documento
     params_res = supabase.table("company_accounting_parameters").select("*").eq("organization_id", org_id).execute()
     company_params: Dict[str, Dict[str, str]] = {}
     if params_res.data:
         for row in params_res.data:
-            company_params[row["concept_code"]] = {"account": row["account_puc"], "name": row["account_name"]}
+            concept = str(row["concept_code"]).strip()
+            row_doc = str(row.get("tipo_documento") or "").strip()
+            entry = {
+                "account": row["account_puc"],
+                "name": row["account_name"],
+                "nature": row.get("nature", ""),
+                "tipo_documento": row_doc,
+            }
+            if row_doc:
+                company_params[f"{concept}_{row_doc}"] = entry
+                if row_doc == doc_type or concept not in company_params:
+                    company_params[concept] = entry
+            else:
+                company_params[concept] = entry
 
     # 2. Cargar reglas de excepción por NIT desde la tabla 'companies'
     rules_res = supabase.table("companies").select("*").eq("organization_id", org_id).execute()
-    provider_rules: Dict[str, str] = {}
+    provider_rules: Dict[str, Dict[str, str]] = {}
     if rules_res.data:
         for row in rules_res.data:
-            nit_val = row.get("nit")
-            unspsc_val = row.get("unspsc")
+            nit_val = (row.get("nit") or "").strip()
+            unspsc_val = (row.get("unspsc") or "").strip()
+            row_doc = str(row.get("tipo_documento") or "").strip()
             if nit_val and unspsc_val:
-                provider_rules[nit_val.strip()] = unspsc_val.strip()
+                if not row_doc or row_doc == doc_type or nit_val not in provider_rules:
+                    provider_rules[nit_val] = {
+                        "unspsc_code": unspsc_val,
+                        "tipo_documento": row_doc,
+                    }
 
-    # 3. Cargar el maestro global UNSPSC
+    # 3. Cargar el maestro global UNSPSC preservando tipo_documento y suggested_tipmov
     unspsc_res = supabase.table("unspsc").select("*").execute()
     unspsc_master: Dict[str, Dict[str, str]] = {}
     if unspsc_res.data:
         for row in unspsc_res.data:
-            unspsc_master[str(row["code"])] = {
+            code_str = str(row["code"]).strip()
+            row_doc = str(row.get("tipo_documento") or "").strip()
+            payload_unspsc = {
+                "code": code_str,
                 "category_type": row["category_type"],
                 "suggested_puc_account": row["suggested_puc_account"],
-                "description": row["description"]
+                "suggested_tipmov": row.get("suggested_tipmov", ""),
+                "description": row["description"],
+                "tipo_documento": row_doc,
             }
+            if row_doc:
+                unspsc_master[f"{code_str}_{row_doc}"] = payload_unspsc
+                if row_doc == doc_type or code_str not in unspsc_master:
+                    unspsc_master[code_str] = payload_unspsc
+            else:
+                unspsc_master[code_str] = payload_unspsc
 
     items_res = supabase.table("invoice_items").select("*").eq("invoice_id", invoice_id).execute()
     taxes_res = supabase.table("invoice_taxes").select("*").eq("invoice_id", invoice_id).execute()
 
     items_data = items_res.data or []
-    
-    # Tomamos directamente todos los impuestos limpios y únicos de la tabla
     taxes_data = taxes_res.data or []
-    
-    # 4. Instanciar el motor con el maestro UNSPSC integrado
+
+    # 4. Instanciar el motor con el maestro UNSPSC y reglas integradas
     engine = PucAccountingEngine(
         company_parameters=company_params,
         provider_rules=provider_rules,
         unspsc_master=unspsc_master
     )
-    
+
     journal_entry = engine.generate_journal_entry(
-        invoice_id=invoice["id"], 
+        invoice_id=invoice["id"],
         full_number=invoice["full_number"],
-        document_type=invoice.get("document_type", "01"),
-        issuer_nit=invoice["issuer_nit"], 
+        document_type=doc_type,
+        tipo_documento=doc_type,
+        issuer_nit=invoice["issuer_nit"],
         issuer_name=invoice["issuer_name"],
-        line_extension_amount=invoice["line_extension_amount"], 
+        line_extension_amount=invoice["line_extension_amount"],
         payable_amount=invoice["payable_amount"],
-        items=items_data, 
-        taxes=taxes_data, 
+        items=items_data,
+        taxes=taxes_data,
         mode=grouping_mode
     )
-
+    
     # --- PERSISTIR CUENTAS RESUELTAS EN CADA ÍTEM (invoice_items) ---
     if grouping_mode == GroupingMode.CONSOLIDATED:
         primary_acc = journal_entry.resolved_purchase_accounts_audit[0]['account'] if journal_entry.resolved_purchase_accounts_audit else None
@@ -1418,35 +1478,56 @@ def delete_subscription_plan(plan_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error eliminando plan: {str(e)}")
 
-@app.get("/export/{target_erp}/{organization_id}", dependencies=[Depends(allow_exporter)])
-def export_erp_file(target_erp: str, organization_id: str):
+@app.get("/export/{target_erp}/{organization_id}")
+def export_erp(
+    target_erp: str,
+    organization_id: str,
+    tipo_documento: str = Query("01", description="Tipo de documento DIAN: 01, 91 o 92"),
+    comprobante: str = Query(..., description="Número o código de comprobante de la empresa"),
+    current_user: dict = Depends(get_current_user)
+):    
     target = target_erp.lower().strip()
+    doc_type = tipo_documento.strip()
+    voucher_number = comprobante.strip()
+
+    if doc_type not in ("01", "91", "92"):
+        raise HTTPException(
+            status_code=422,
+            detail="El parámetro tipo_documento debe ser '01' (Factura), '91' (Nota Crédito) o '92' (Nota Débito)."
+        )
+
+    if not voucher_number:
+        raise HTTPException(
+            status_code=422,
+            detail="El parámetro comprobante es obligatorio y no puede estar vacío."
+        )
+
     exporter = ErpExporterEngine(supabase_client=supabase)
 
     try:
         if target == "siigo":
-            content = exporter.export_siigo(organization_id)
-            filename = f"Importacion_Siigo_{organization_id[:8]}.xlsx"
+            content = exporter.export_siigo(organization_id, tipo_documento=doc_type, comprobante=voucher_number)
+            filename = f"Importacion_Siigo_{doc_type}_{organization_id[:8]}.xlsx"
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif target == "helisa":
-            content = exporter.export_helisa(organization_id)
-            filename = f"Importacion_Helisa_{organization_id[:8]}.csv"
+            content = exporter.export_helisa(organization_id, tipo_documento=doc_type, comprobante=voucher_number)
+            filename = f"Importacion_Helisa_{doc_type}_{organization_id[:8]}.csv"
             media_type = "text/csv"
         elif target == "loggro":
-            content = exporter.export_loggro(organization_id)
-            filename = f"Importacion_Loggro_{organization_id[:8]}.xlsx"
+            content = exporter.export_loggro(organization_id, tipo_documento=doc_type, comprobante=voucher_number)
+            filename = f"Importacion_Loggro_{doc_type}_{organization_id[:8]}.xlsx"
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif target == "syscafe":
-            content = exporter.export_syscafe(organization_id)
-            filename = f"Importacion_SysCafe_{organization_id[:8]}.txt"
+            content = exporter.export_syscafe(organization_id, tipo_documento=doc_type, comprobante=voucher_number)
+            filename = f"Importacion_SysCafe_{doc_type}_{organization_id[:8]}.txt"
             media_type = "text/plain"
         elif target == "alegra":
-            content = exporter.export_alegra(organization_id)
-            filename = f"Importacion_Alegra_{organization_id[:8]}.xlsx"
+            content = exporter.export_alegra(organization_id, tipo_documento=doc_type, comprobante=voucher_number)
+            filename = f"Importacion_Alegra_{doc_type}_{organization_id[:8]}.xlsx"
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         elif target == "world_office":
-            content = exporter.export_world_office(organization_id)
-            filename = f"Importacion_WorldOffice_{organization_id[:8]}.xlsx"
+            content = exporter.export_world_office(organization_id, tipo_documento=doc_type, comprobante=voucher_number)
+            filename = f"Importacion_WorldOffice_{doc_type}_{organization_id[:8]}.xlsx"
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
             raise HTTPException(
@@ -1459,6 +1540,8 @@ def export_erp_file(target_erp: str, organization_id: str):
             media_type=media_type,
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:

@@ -37,7 +37,7 @@ interface CompanyItem {
   nit: string;
   organization_id?: string;
   is_active?: boolean;
-  unspsc?: string;       // <--- Asegúrate de tener esto
+  unspsc?: string;
   unspsc_code?: string;
 }
 
@@ -48,7 +48,7 @@ interface OrganizationItem {
   is_active?: boolean;
   created_at?: string;
 }
- 
+
 export interface SubscriptionPlanItem {
   id: string;
   code: string;
@@ -212,14 +212,14 @@ export default function SaaSApplication() {
   const [showUnspscForm, setShowUnspscForm] = useState(false);
   const [editingUnspscId, setEditingUnspscId] = useState<string | null>(null);
   const [unspscFormData, setUnspscFormData] = useState({
-     code: "",
-     description: "",
-     category_type: "COMPRA",
-     suggested_puc_account: "",
-     tipo_documento: "01" as "01" | "91" | "92",
-     suggested_tipmov: "D" as "D" | "C"
-   });
-   
+    code: "",
+    description: "",
+    category_type: "COMPRA",
+    suggested_puc_account: "",
+    tipo_documento: "01" as "01" | "91" | "92",
+    suggested_tipmov: "D" as "D" | "C"
+  });
+
   // --- ESTADO FACTURACIÓN SAAS (SUPER_ADMIN) ---
   const [billingKpis, setBillingKpis] = useState({
     total_organizations: 0,
@@ -268,6 +268,8 @@ export default function SaaSApplication() {
   const [showParamForm, setShowParamForm] = useState(false);
   const [editingParamId, setEditingParamId] = useState<string | null>(null);
   const [accountingParamsList, setAccountingParamsList] = useState<AccountingParameter[]>([]);
+  const [selectedParamDocType, setSelectedParamDocType] = useState<"01" | "91" | "92">("01");
+  const [selectedUnspscDocType, setSelectedUnspscDocType] = useState<"01" | "91" | "92">("01");
   const [paramFormData, setParamFormData] = useState({
     concept_code: "",
     concept_name: "",
@@ -295,8 +297,10 @@ export default function SaaSApplication() {
 
   // --- EXPORTACIÓN ERP ---
   const [selectedErp, setSelectedErp] = useState("siigo");
+  const [exportDocType, setExportDocType] = useState<"01" | "91" | "92">("01");
+  const [exportVoucherNumber, setExportVoucherNumber] = useState<string>("");
 
-  // --- CARGA PÚBLica DE ORGANIZACIONES PARA LOGIN ---
+  // --- CARGA PÚBLICA DE ORGANIZACIONES PARA LOGIN ---
   const loadPublicOrganizations = async () => {
     try {
       const resOrg = await fetch(`${API_BASE}/auth/organizations`);
@@ -357,6 +361,12 @@ export default function SaaSApplication() {
           setAccountingParamsList(dataParams.data || dataParams.parameters || []);
         }
 
+        const resUnspsc = await fetch(`${API_BASE}/unspsc-master`, { headers });
+        if (resUnspsc.ok) {
+          const dataUnspsc = await resUnspsc.json();
+          setUnspscMasterList(dataUnspsc.data || dataUnspsc.unspsc || []);
+        }
+
         const resEmails = await fetch(`${API_BASE}/email-integrations`, { headers });
         if (resEmails.ok) {
           const dataEmails = await resEmails.json();
@@ -370,22 +380,16 @@ export default function SaaSApplication() {
           const dataSubs = await resSubs.json();
           setSubscriptionsList(dataSubs.data || dataSubs.subscriptions || []);
         }
-		
-		const resPlans = await fetch(`${API_BASE}/subscription-plans`, { headers });
+
+        const resPlans = await fetch(`${API_BASE}/subscription-plans`, { headers });
         if (resPlans.ok) {
           const dataPlans = await resPlans.json();
-          const plansArray = Array.isArray(dataPlans) 
-            ? dataPlans 
+          const plansArray = Array.isArray(dataPlans)
+            ? dataPlans
             : (dataPlans.data || dataPlans.plans || dataPlans.subscription_plans || []);
           setSubscriptionPlansList(plansArray);
         }
 
-        const resUnspsc = await fetch(`${API_BASE}/unspsc-master`, { headers });
-        if (resUnspsc.ok) {
-          const dataUnspsc = await resUnspsc.json();
-          setUnspscMasterList(dataUnspsc.data || dataUnspsc.unspsc || []);
-        }
-		
         const resBilling = await fetch(`${API_BASE}/billing/summary`, { headers });
         if (resBilling.ok) {
           const dataBilling = await resBilling.json();
@@ -599,7 +603,6 @@ export default function SaaSApplication() {
       return;
     }
 
-    // Validación única al hacer clic en Causar: verificar que los seleccionados estén PARSEADO
     const selectedInvoices = invoicesList.filter((inv) => selectedInvoiceIds.includes(inv.id));
     const invalidInvoices = selectedInvoices.filter((inv) => (inv.status || "").toUpperCase() !== "PARSEADO");
 
@@ -610,7 +613,7 @@ export default function SaaSApplication() {
 
     setIsCausing(true);
     const token = localStorage.getItem("access_token") || "";
-	
+
     try {
       const res = await fetch(`${API_BASE}/causar-masivo`, {
         method: "POST",
@@ -645,7 +648,7 @@ export default function SaaSApplication() {
       setIsCausing(false);
     }
   };
-  
+
   const handleDownloadErpPlan = async () => {
     const orgId = currentUser?.organization_id;
     if (!orgId) {
@@ -653,10 +656,21 @@ export default function SaaSApplication() {
       return;
     }
 
+    const voucherClean = exportVoucherNumber.trim();
+    if (!voucherClean) {
+      alert("Debe ingresar el número o código de comprobante que usa la empresa antes de exportar.");
+      return;
+    }
+
     const token = localStorage.getItem("access_token") || "";
 
     try {
-      const response = await fetch(`${API_BASE}/export/${selectedErp}/${orgId}`, {
+      const params = new URLSearchParams({
+        tipo_documento: exportDocType,
+        comprobante: voucherClean
+      });
+
+      const response = await fetch(`${API_BASE}/export/${selectedErp}/${orgId}?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -669,8 +683,8 @@ export default function SaaSApplication() {
 
       const blob = await response.blob();
       const contentDisposition = response.headers.get("Content-Disposition");
-      let filename = `Importacion_${selectedErp}_${orgId.slice(0, 8)}`;
-      
+      let filename = `Importacion_${selectedErp}_${exportDocType}_${orgId.slice(0, 8)}`;
+
       if (contentDisposition && contentDisposition.includes("filename=")) {
         const matches = contentDisposition.match(/filename=(.+)/);
         if (matches && matches[1]) {
@@ -691,14 +705,6 @@ export default function SaaSApplication() {
     }
   };
 
-  
-
-  const toggleSelectInvoice = (id: string) => {
-    setSelectedInvoiceIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
-  };
-
   // ============================================================================
   // 1. CRUD ORGANIZACIONES (SOLO SUPER_ADMIN)
   // ============================================================================
@@ -713,17 +719,15 @@ export default function SaaSApplication() {
         : `${API_BASE}/organizations`;
       const method = editingOrgId ? "PUT" : "POST";
 
-    const res = await fetch(url, {
+      const res = await fetch(url, {
         method,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          name: companyFormData.name,
-          nit: companyFormData.nit,
-          unspsc: companyFormData.unspsc || null,
-          organization_id: currentUser?.organization_id
+          name: orgFormData.name,
+          nit: orgFormData.nit
         })
       });
 
@@ -865,7 +869,6 @@ export default function SaaSApplication() {
     e.preventDefault();
     setIsSavingCompany(true);
     const token = localStorage.getItem("access_token") || "";
-	console.log("ESTADO ACTUAL UNSPSC:", companyFormData);
     try {
       const url = editingCompanyId
         ? `${API_BASE}/companies/${editingCompanyId}`
@@ -891,7 +894,7 @@ export default function SaaSApplication() {
         alert(editingCompanyId ? "¡Excepción NIT actualizada!" : "¡Excepción NIT registrada!");
         setShowCompanyForm(false);
         setEditingCompanyId(null);
-        setCompanyFormData({ name: "", nit: "" });
+        setCompanyFormData({ name: "", nit: "", unspsc: "", unspsc_code: "" });
         loadAllMaintenanceTables(token, currentUser?.role);
       } else {
         alert("Error: " + (data.detail || "Permisos insuficientes"));
@@ -905,7 +908,12 @@ export default function SaaSApplication() {
 
   const handleEditCompany = (c: CompanyItem) => {
     setEditingCompanyId(c.id);
-    setCompanyFormData({ name: c.name, nit: c.nit, unspsc: c.unspsc_code || c.unspsc || "", unspsc_code: c.unspsc_code || "" });
+    setCompanyFormData({
+      name: c.name,
+      nit: c.nit,
+      unspsc: c.unspsc_code || c.unspsc || "",
+      unspsc_code: c.unspsc_code || c.unspsc || ""
+    });
     setShowCompanyForm(true);
   };
 
@@ -931,11 +939,16 @@ export default function SaaSApplication() {
   // ============================================================================
   const handleSaveAccountingParam = async (e: React.FormEvent) => {
     e.preventDefault();
+    const activeDocType = selectedParamDocType;
+    if (!activeDocType) {
+      alert("Primero debes filtrar y seleccionar el tipo de documento (01, 91 o 92).");
+      return;
+    }
     const token = localStorage.getItem("access_token") || "";
 
     try {
       const url = editingParamId
-        ? `${API_BASE}/accounting-parameters/${editingParamId}`
+        ? `${API_BASE}/accounting-parameters/${editingParamId}?tipo_documento=${activeDocType}`
         : `${API_BASE}/accounting-parameters`;
       const method = editingParamId ? "PUT" : "POST";
 
@@ -947,6 +960,7 @@ export default function SaaSApplication() {
         },
         body: JSON.stringify({
           ...paramFormData,
+          tipo_documento: activeDocType,
           organization_id: currentUser?.organization_id
         })
       });
@@ -961,7 +975,8 @@ export default function SaaSApplication() {
           concept_name: "",
           account_puc: "",
           account_name: "",
-          nature: "D"
+          nature: "D",
+          tipo_documento: activeDocType
         });
         loadAllMaintenanceTables(token, currentUser?.role);
       } else {
@@ -973,22 +988,26 @@ export default function SaaSApplication() {
   };
 
   const handleEditAccountingParam = (p: AccountingParameter) => {
+    const docType = ((p as any).tipo_documento || selectedParamDocType) as "01" | "91" | "92";
+    setSelectedParamDocType(docType);
     setEditingParamId(p.id);
     setParamFormData({
       concept_code: p.concept_code,
       concept_name: p.concept_name || "",
       account_puc: p.account_puc,
       account_name: p.account_name,
-      nature: p.nature
+      nature: p.nature,
+      tipo_documento: docType
     });
     setShowParamForm(true);
   };
 
   const handleDeleteAccountingParam = async (paramId: string, code: string) => {
-    if (!confirm(`¿Seguro que deseas eliminar el parámetro contable "${code}"?`)) return;
+    const activeDocType = selectedParamDocType;
+    if (!confirm(`¿Seguro que deseas eliminar el parámetro contable "${code}" del tipo de documento ${activeDocType}?`)) return;
     const token = localStorage.getItem("access_token") || "";
     try {
-      const res = await fetch(`${API_BASE}/accounting-parameters/${paramId}`, {
+      const res = await fetch(`${API_BASE}/accounting-parameters/${paramId}?tipo_documento=${activeDocType}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -1335,10 +1354,11 @@ export default function SaaSApplication() {
 
   const filteredParams = accountingParamsList.filter(
     (p) =>
-      p.concept_code.toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
-      (p.concept_name || "").toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
-      p.account_puc.includes(paramSearchFilter) ||
-      p.account_name.toLowerCase().includes(paramSearchFilter.toLowerCase())
+      ((p as any).tipo_documento || "01") === selectedParamDocType &&
+      (p.concept_code.toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
+        (p.concept_name || "").toLowerCase().includes(paramSearchFilter.toLowerCase()) ||
+        p.account_puc.includes(paramSearchFilter) ||
+        p.account_name.toLowerCase().includes(paramSearchFilter.toLowerCase()))
   );
 
   const creditsRemaining = orgSubscription
@@ -1612,8 +1632,6 @@ export default function SaaSApplication() {
               {/* BANDEJA DE FACTURAS CARGADAS Y CONTROLES DE CAUSACIÓN */}
               <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                 <div className="p-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                  
-				  <div className="p-5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-sm font-bold text-white">
                       Bandeja de Facturas Electrónicas DIAN ({invoicesList.length})
@@ -1665,12 +1683,9 @@ export default function SaaSApplication() {
                     </button>
                   </div>
                 </div>
-				  
-                </div>
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs text-slate-300">
-				    
                     <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
                       <tr>
                         <th className="px-4 py-3.5 w-10">
@@ -1688,8 +1703,8 @@ export default function SaaSApplication() {
                             title="Seleccionar todos"
                           />
                         </th>
-                        <th className="px-4 py-3.5">Número</th>    
-						<th className="px-4 py-3.5">Fecha</th>
+                        <th className="px-4 py-3.5">Número</th>
+                        <th className="px-4 py-3.5">Fecha</th>
                         <th className="px-4 py-3.5">Emisor / Tercero</th>
                         <th className="px-4 py-3.5 text-right">Subtotal</th>
                         <th className="px-4 py-3.5 text-right">Total a Pagar</th>
@@ -1715,14 +1730,14 @@ export default function SaaSApplication() {
                                   if (e.target.checked) {
                                     setSelectedInvoiceIds([...selectedInvoiceIds, inv.id]);
                                   } else {
-                                    setSelectedInvoiceIds(selectedInvoiceIds.filter(id => id !== inv.id));
+                                    setSelectedInvoiceIds(selectedInvoiceIds.filter((id) => id !== inv.id));
                                   }
                                 }}
                                 className="w-4 h-4 rounded bg-slate-950 border-slate-700 cursor-pointer text-blue-600 focus:ring-blue-500"
                               />
                             </td>
-							
-							<td className="px-4 py-3.5 font-mono font-bold text-white">
+
+                            <td className="px-4 py-3.5 font-mono font-bold text-white">
                               {inv.full_number}
                             </td>
                             <td className="px-4 py-3.5 font-mono text-slate-400">
@@ -1751,27 +1766,27 @@ export default function SaaSApplication() {
                                 {inv.status}
                               </span>
                             </td>
-                     		<td className="px-4 py-3.5 text-right space-x-2 whitespace-nowrap">
-							  <button
-								type="button"
-								disabled={isCausing}
-								onClick={() => handleCausarSingle(inv.id, inv.status)}
-								className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-							  >
-								<Eye className="w-3.5 h-3.5" />
-							    <span>{inv.status === "CAUSADO" ? "Ver Asiento" : "Causar"}</span>
-							  </button>
-							  <button
-							    type="button"
-								onClick={() => handleOpenInvoiceDetails(inv.id)}
-								title="Ver Detalle y Validar DIAN"
-								className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-							  >
-								<Receipt className="w-3.5 h-3.5 text-amber-400" />
-								<span>Ver DIAN</span>
-							  </button>
-							</td>
-						 </tr>
+                            <td className="px-4 py-3.5 text-right space-x-2 whitespace-nowrap">
+                              <button
+                                type="button"
+                                disabled={isCausing}
+                                onClick={() => handleCausarSingle(inv.id, inv.status)}
+                                className="px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>{inv.status === "CAUSADO" ? "Ver Asiento" : "Causar"}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenInvoiceDetails(inv.id)}
+                                title="Ver Detalle y Validar DIAN"
+                                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <Receipt className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Ver DIAN</span>
+                              </button>
+                            </td>
+                          </tr>
                         ))
                       )}
                     </tbody>
@@ -1873,165 +1888,160 @@ export default function SaaSApplication() {
           )}
 
           {/* MODAL VISOR DE FACTURA DIAN & ÍTEMS */}
-        {invoiceDetailModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
-              <div className="p-6 border-b border-slate-800 flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <Receipt className="w-5 h-5 text-indigo-400" />
-                    Factura Electrónica DIAN — {invoiceDetailModal.invoice.full_number}
-                  </h3>
-                  
-                  {/* SECCIÓN CUFE CON BOTÓN DE COPIAR */}
-                  <div className="flex items-center gap-2 mt-1">
-                    <p className="text-xs text-slate-400 font-mono truncate max-w-lg">
-                      CUFE: {invoiceDetailModal.invoice.cufe}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(invoiceDetailModal.invoice.cufe);
-                        alert("¡CUFE copiado al portapapeles!");
-                      }}
-                      className="px-2 py-0.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded text-[10px] font-semibold transition-colors shrink-0 cursor-pointer"
-                    >
-                      Copiar CUFE
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setInvoiceDetailModal(null)}
-                  className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/60 cursor-pointer"
-                >
-                  <XCircle className="w-5 h-5" />
-                </button>
-              </div>
-			  <div className="p-6 overflow-y-auto space-y-6">
-                {/* Emisor / Receptor */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs bg-slate-950 p-4 rounded-xl border border-slate-800">
+          {invoiceDetailModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+                <div className="p-6 border-b border-slate-800 flex items-center justify-between">
                   <div>
-                    <span className="text-slate-500 uppercase text-[10px] font-bold block">Emisor</span>
-                    <p className="font-bold text-white text-sm">{invoiceDetailModal.invoice.issuer_name}</p>
-                    <p className="font-mono text-slate-400">NIT: {invoiceDetailModal.invoice.issuer_nit}</p>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 uppercase text-[10px] font-bold block">Receptor</span>
-                    <p className="font-bold text-white text-sm">{invoiceDetailModal.invoice.receiver_name}</p>
-                    <p className="font-mono text-slate-400">NIT: {invoiceDetailModal.invoice.receiver_nit}</p>
-                  </div>
-                </div>
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Receipt className="w-5 h-5 text-indigo-400" />
+                      Factura Electrónica DIAN — {invoiceDetailModal.invoice.full_number}
+                    </h3>
 
-                {/* Tabla de Ítems */}
-                <div>
-                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">
-                    Ítems / Detalle de la Factura ({invoiceDetailModal.items.length})
-                  </h4>
-                  <div className="overflow-x-auto border border-slate-800 rounded-xl">
-                    <table className="w-full text-left text-xs text-slate-300">
-                      <thead className="bg-slate-950 uppercase text-[10px] text-slate-500 border-b border-slate-800">
-                        <tr>
-                          <th className="px-3 py-2">#</th>
-                          <th className="px-3 py-2">UNSPSC / Ref</th>
-                          <th className="px-3 py-2">Descripción</th>
-                          <th className="px-3 py-2 text-right">Cant.</th>
-                          <th className="px-3 py-2 text-right">V. Unitario</th>
-                          <th className="px-3 py-2 text-right">Subtotal</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/50">
-                        {invoiceDetailModal.items.map((item: any, idx: number) => (
-                          <tr key={item.id || idx}>
-                            <td className="px-3 py-2 font-mono">{item.line_number}</td>
-                            <td className="px-3 py-2 font-mono text-indigo-300">
-                              {item.unspsc_code || item.seller_item_id || "-"}
-                            </td>
-                            <td className="px-3 py-2 text-slate-200">{item.description}</td>
-                            <td className="px-3 py-2 text-right font-mono">{item.quantity}</td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              ${Number(item.unit_price || 0).toLocaleString("es-CO")}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono font-bold text-white">
-                              ${Number(item.subtotal || 0).toLocaleString("es-CO")}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-xs text-slate-400 font-mono truncate max-w-lg">
+                        CUFE: {invoiceDetailModal.invoice.cufe}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(invoiceDetailModal.invoice.cufe);
+                          alert("¡CUFE copiado al portapapeles!");
+                        }}
+                        className="px-2 py-0.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded text-[10px] font-semibold transition-colors shrink-0 cursor-pointer"
+                      >
+                        Copiar CUFE
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                {/* Impuestos y Retenciones */}
-                {invoiceDetailModal.taxes.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setInvoiceDetailModal(null)}
+                    className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/60 cursor-pointer"
+                  >
+                    <XCircle className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-6 overflow-y-auto space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs bg-slate-950 p-4 rounded-xl border border-slate-800">
+                    <div>
+                      <span className="text-slate-500 uppercase text-[10px] font-bold block">Emisor</span>
+                      <p className="font-bold text-white text-sm">{invoiceDetailModal.invoice.issuer_name}</p>
+                      <p className="font-mono text-slate-400">NIT: {invoiceDetailModal.invoice.issuer_nit}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 uppercase text-[10px] font-bold block">Receptor</span>
+                      <p className="font-bold text-white text-sm">{invoiceDetailModal.invoice.receiver_name}</p>
+                      <p className="font-mono text-slate-400">NIT: {invoiceDetailModal.invoice.receiver_nit}</p>
+                    </div>
+                  </div>
+
                   <div>
                     <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">
-                      Impuestos y Retenciones (Detalle Consolidado)
+                      Ítems / Detalle de la Factura ({invoiceDetailModal.items.length})
                     </h4>
                     <div className="overflow-x-auto border border-slate-800 rounded-xl">
                       <table className="w-full text-left text-xs text-slate-300">
                         <thead className="bg-slate-950 uppercase text-[10px] text-slate-500 border-b border-slate-800">
                           <tr>
-                            <th className="px-3 py-2">Tipo</th>
-                            <th className="px-3 py-2 text-right">Porcentaje</th>
-                            <th className="px-3 py-2 text-right">Base Gravable</th>
-                            <th className="px-3 py-2 text-right">Valor Impuesto</th>
+                            <th className="px-3 py-2">#</th>
+                            <th className="px-3 py-2">UNSPSC / Ref</th>
+                            <th className="px-3 py-2">Descripción</th>
+                            <th className="px-3 py-2 text-right">Cant.</th>
+                            <th className="px-3 py-2 text-right">V. Unitario</th>
+                            <th className="px-3 py-2 text-right">Subtotal</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/50">
-                          {invoiceDetailModal.taxes
-                            .filter((tax: any) => tax.scope === "D" || !tax.scope)
-                            .map((tax: any, idx: number) => (
-                              <tr key={tax.id || idx}>
-                                <td className="px-3 py-2 font-semibold text-white">{tax.type}</td>
-                                <td className="px-3 py-2 text-right font-mono">{tax.percent}%</td>
-                                <td className="px-3 py-2 text-right font-mono">
-                                  ${Number(tax.taxable_amount || 0).toLocaleString("es-CO")}
-                                </td>
-                                <td className="px-3 py-2 text-right font-mono text-amber-400">
-                                  ${Number(tax.tax_amount || 0).toLocaleString("es-CO")}
-                                </td>
-                              </tr>
-                            ))}
+                          {invoiceDetailModal.items.map((item: any, idx: number) => (
+                            <tr key={item.id || idx}>
+                              <td className="px-3 py-2 font-mono">{item.line_number}</td>
+                              <td className="px-3 py-2 font-mono text-indigo-300">
+                                {item.unspsc_code || item.seller_item_id || "-"}
+                              </td>
+                              <td className="px-3 py-2 text-slate-200">{item.description}</td>
+                              <td className="px-3 py-2 text-right font-mono">{item.quantity}</td>
+                              <td className="px-3 py-2 text-right font-mono">
+                                ${Number(item.unit_price || 0).toLocaleString("es-CO")}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-white">
+                                ${Number(item.subtotal || 0).toLocaleString("es-CO")}
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
                   </div>
-                )}
-				
-                {/* Totales y Enlace Directo al Portal DIAN por CUFE */}
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <p className="text-xs text-slate-400">
-                      Total a Pagar:{" "}
-                      <strong className="text-emerald-400 font-mono text-base">
-                        ${Number(invoiceDetailModal.invoice.payable_amount || 0).toLocaleString("es-CO")} {invoiceDetailModal.invoice.currency || "COP"}
-                      </strong>
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <a
-                      href={`https://catalogo-vpfe.dian.gov.co/document/search?documentKey=${invoiceDetailModal.invoice.cufe}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors"
-                    >
-                      <span>Validar en Portal DIAN (CUFE)</span>
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => setInvoiceDetailModal(null)}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
-                    >
-                      Cerrar
-                    </button>
+
+                  {invoiceDetailModal.taxes.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">
+                        Impuestos y Retenciones (Detalle Consolidado)
+                      </h4>
+                      <div className="overflow-x-auto border border-slate-800 rounded-xl">
+                        <table className="w-full text-left text-xs text-slate-300">
+                          <thead className="bg-slate-950 uppercase text-[10px] text-slate-500 border-b border-slate-800">
+                            <tr>
+                              <th className="px-3 py-2">Tipo</th>
+                              <th className="px-3 py-2 text-right">Porcentaje</th>
+                              <th className="px-3 py-2 text-right">Base Gravable</th>
+                              <th className="px-3 py-2 text-right">Valor Impuesto</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/50">
+                            {invoiceDetailModal.taxes
+                              .filter((tax: any) => tax.scope === "D" || !tax.scope)
+                              .map((tax: any, idx: number) => (
+                                <tr key={tax.id || idx}>
+                                  <td className="px-3 py-2 font-semibold text-white">{tax.type}</td>
+                                  <td className="px-3 py-2 text-right font-mono">{tax.percent}%</td>
+                                  <td className="px-3 py-2 text-right font-mono">
+                                    ${Number(tax.taxable_amount || 0).toLocaleString("es-CO")}
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-mono text-amber-400">
+                                    ${Number(tax.tax_amount || 0).toLocaleString("es-CO")}
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <p className="text-xs text-slate-400">
+                        Total a Pagar:{" "}
+                        <strong className="text-emerald-400 font-mono text-base">
+                          ${Number(invoiceDetailModal.invoice.payable_amount || 0).toLocaleString("es-CO")} {invoiceDetailModal.invoice.currency || "COP"}
+                        </strong>
+                      </p>
+                    </div>
+                    <div className="flex gap-3">
+                      <a
+                        href={`https://catalogo-vpfe.dian.gov.co/document/search?documentKey=${invoiceDetailModal.invoice.cufe}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors"
+                      >
+                        <span>Validar en Portal DIAN (CUFE)</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setInvoiceDetailModal(null)}
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
+                      >
+                        Cerrar
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
           {/* ==================================================================
               MÓDULO 2: MANTENIMIENTO DE TABLAS
@@ -2157,8 +2167,8 @@ export default function SaaSApplication() {
                     <span>Suscripciones (company_subscriptions)</span>
                   </button>
                 )}
-				
-				{isSuperAdmin && (
+
+                {isSuperAdmin && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2177,7 +2187,7 @@ export default function SaaSApplication() {
                   </button>
                 )}
 
-                {isSuperAdmin && (
+                {canManageTenantTables && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2530,7 +2540,7 @@ export default function SaaSApplication() {
                       type="button"
                       onClick={() => {
                         setEditingCompanyId(null);
-                        setCompanyFormData({ name: "", nit: "" });
+                        setCompanyFormData({ name: "", nit: "", unspsc: "", unspsc_code: "" });
                         setShowCompanyForm(!showCompanyForm);
                       }}
                       className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
@@ -2689,6 +2699,20 @@ export default function SaaSApplication() {
                     </div>
 
                     <div className="flex items-center gap-3">
+                      <select
+                        value={selectedParamDocType}
+                        onChange={(e) => {
+                          const docType = e.target.value as "01" | "91" | "92";
+                          setSelectedParamDocType(docType);
+                          setEditingParamId(null);
+                          setShowParamForm(false);
+                        }}
+                        className="bg-slate-900 border border-indigo-500/40 rounded-xl px-3 py-2 text-xs text-white font-semibold focus:outline-none"
+                      >
+                        <option value="01">Tipo Doc: 01 - Factura</option>
+                        <option value="91">Tipo Doc: 91 - Nota Crédito</option>
+                        <option value="92">Tipo Doc: 92 - Nota Débito</option>
+                      </select>
                       <input
                         type="text"
                         placeholder="Buscar código, PUC o descripción..."
@@ -2705,7 +2729,8 @@ export default function SaaSApplication() {
                             concept_name: "",
                             account_puc: "",
                             account_name: "",
-                            nature: "D"
+                            nature: selectedParamDocType === "91" ? "C" : "D",
+                            tipo_documento: selectedParamDocType
                           });
                           setShowParamForm(!showParamForm);
                         }}
@@ -2834,7 +2859,6 @@ export default function SaaSApplication() {
                       </form>
                     </div>
                   )}
-
                   <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-xs text-slate-300">
                       <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
@@ -3096,7 +3120,6 @@ export default function SaaSApplication() {
                       </form>
                     </div>
                   )}
-
                   <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-xs text-slate-300">
                       <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
@@ -3237,14 +3260,14 @@ export default function SaaSApplication() {
                               ))}
                             </select>
                           </div>
-						  <div>
+                          <div>
                             <label className="block text-xs text-slate-400 mb-1">Plan Comercial SaaS</label>
                             <select
                               required
                               value={subFormData.plan_name}
                               onChange={(e) => {
                                 const selectedCode = e.target.value;
-                                const foundPlan = subscriptionPlansList.find(p => p.code === selectedCode);
+                                const foundPlan = subscriptionPlansList.find((p) => p.code === selectedCode);
                                 if (foundPlan) {
                                   setSubFormData({
                                     ...subFormData,
@@ -3265,8 +3288,8 @@ export default function SaaSApplication() {
                                 </option>
                               ))}
                             </select>
-                          </div>                         
-						  <div>
+                          </div>
+                          <div>
                             <label className="block text-xs text-slate-400 mb-1">
                               Créditos Asignados
                             </label>
@@ -3385,7 +3408,6 @@ export default function SaaSApplication() {
                       </form>
                     </div>
                   )}
-
                   <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-xs text-slate-300">
                       <thead className="bg-slate-950/60 uppercase text-[10px] text-slate-400 border-b border-slate-800">
@@ -3666,30 +3688,56 @@ export default function SaaSApplication() {
                 </div>
               )}
 
-              {/* 8. CATÁLOGO UNSPSC (SOLO SUPER_ADMIN) */}
-              {maintenanceSubTab === "unspsc" && isSuperAdmin && (
+              {/* 8. CATÁLOGO UNSPSC (SUPER_ADMIN Y COMPANY_ADMIN) */}
+              {maintenanceSubTab === "unspsc" && canManageTenantTables && (
                 <div className="space-y-4">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-wrap justify-between items-center gap-3">
                     <h3 className="text-sm font-semibold text-slate-300">
-                      Maestro Global UNSPSC & Cuentas PUC Sugeridas ({unspscMasterList.length} códigos)
+                      Maestro Global UNSPSC & Cuentas PUC Sugeridas (
+                      {
+                        unspscMasterList.filter(
+                          (u) => ((u as any).tipo_documento || "01") === selectedUnspscDocType
+                        ).length
+                      }{" "}
+                      códigos)
                     </h3>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingUnspscId(null);
-                        setUnspscFormData({
-                          code: "",
-                          description: "",
-                          category_type: "COMPRA",
-                          suggested_puc_account: ""
-                        });
-                        setShowUnspscForm(!showUnspscForm);
-                      }}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>{showUnspscForm ? "Cerrar Formulario" : "Nuevo Código UNSPSC"}</span>
-                    </button>
+
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={selectedUnspscDocType}
+                        onChange={(e) => {
+                          const docType = e.target.value as "01" | "91" | "92";
+                          setSelectedUnspscDocType(docType);
+                          setEditingUnspscId(null);
+                          setShowUnspscForm(false);
+                        }}
+                        className="bg-slate-900 border border-indigo-500/40 rounded-xl px-3 py-2 text-xs text-white font-semibold focus:outline-none"
+                      >
+                        <option value="01">Tipo Doc: 01 - Factura</option>
+                        <option value="91">Tipo Doc: 91 - Nota Crédito</option>
+                        <option value="92">Tipo Doc: 92 - Nota Débito</option>
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingUnspscId(null);
+                          setUnspscFormData({
+                            code: "",
+                            description: "",
+                            category_type: "COMPRA",
+                            suggested_puc_account: "",
+                            tipo_documento: selectedUnspscDocType,
+                            suggested_tipmov: selectedUnspscDocType === "91" ? "C" : "D"
+                          });
+                          setShowUnspscForm(!showUnspscForm);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>{showUnspscForm ? "Cerrar Formulario" : "Nuevo Código UNSPSC"}</span>
+                      </button>
+                    </div>
                   </div>
 
                   {showUnspscForm && (
@@ -3701,25 +3749,29 @@ export default function SaaSApplication() {
                         onSubmit={async (e) => {
                           e.preventDefault();
                           const token = localStorage.getItem("access_token") || "";
-                          const url = editingUnspscId ? `${API_BASE}/unspsc-master/${editingUnspscId}` : `${API_BASE}/unspsc-master`;
+                          const url = editingUnspscId
+                            ? `${API_BASE}/unspsc-master/${editingUnspscId}?tipo_documento=${selectedUnspscDocType}`
+                            : `${API_BASE}/unspsc-master`;
                           const method = editingUnspscId ? "PUT" : "POST";
                           const res = await fetch(url, {
                             method,
                             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                            body: JSON.stringify(unspscFormData)
+                            body: JSON.stringify({
+                              ...unspscFormData,
+                              tipo_documento: selectedUnspscDocType
+                            })
                           });
                           if (res.ok) {
                             alert("¡Operación exitosa en maestro UNSPSC!");
                             setShowUnspscForm(false);
                             setEditingUnspscId(null);
-                            loadAllMaintenanceTables(token, "SUPER_ADMIN");
+                            loadAllMaintenanceTables(token, currentUser?.role || "COMPANY_ADMIN");
                           } else {
                             alert("Error guardando UNSPSC");
                           }
                         }}
                         className="space-y-4"
                       >
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">Tipo de Documento DIAN</label>
@@ -3756,8 +3808,7 @@ export default function SaaSApplication() {
                             </select>
                           </div>
                         </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">  
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
                             <label className="block text-xs text-slate-400 mb-1">Categoría / Naturaleza</label>
                             <select
@@ -3793,8 +3844,6 @@ export default function SaaSApplication() {
                             />
                           </div>
                         </div>
-
-
                         <div className="flex justify-end gap-2 pt-2">
                           <button
                             type="button"
@@ -3826,63 +3875,69 @@ export default function SaaSApplication() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
-                        {unspscMasterList.length === 0 ? (
+                        {unspscMasterList.filter((u) => ((u as any).tipo_documento || "01") === selectedUnspscDocType).length === 0 ? (
                           <tr>
                             <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
-                              No hay códigos UNSPSC registrados en la base de datos global.
+                              No hay códigos UNSPSC registrados para el tipo de documento {selectedUnspscDocType}.
                             </td>
                           </tr>
                         ) : (
-                          unspscMasterList.map((item) => (
-                            <tr key={item.id} className="hover:bg-slate-800/30">
-                              <td className="px-5 py-4 font-mono font-bold text-indigo-400">{item.code}</td>
-                              <td className="px-5 py-4 text-white">{item.description}</td>
-                              <td className="px-5 py-4">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-indigo-300 border border-slate-700">
-                                  {item.category_type}
-                                </span>
-                              </td>
-                              <td className="px-5 py-4 font-mono font-bold text-emerald-400">{item.suggested_puc_account}</td>
-                              <td className="px-5 py-4 text-right space-x-2">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingUnspscId(item.id);
-                                    setUnspscFormData({
-                                      code: item.code,
-                                      description: item.description,
-                                      category_type: item.category_type || "COMPRA",
-                                      suggested_puc_account: item.suggested_puc_account
-                                    });
-                                    setShowUnspscForm(true);
-                                  }}
-                                  title="Editar"
-                                  className="p-1.5 bg-slate-800 hover:bg-indigo-600/30 text-indigo-400 rounded-lg cursor-pointer"
-                                >
-                                  <Edit className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    if (!confirm(`¿Seguro que deseas eliminar el UNSPSC ${item.code}?`)) return;
-                                    const token = localStorage.getItem("access_token") || "";
-                                    const res = await fetch(`${API_BASE}/unspsc-master/${item.id}`, {
-                                      method: "DELETE",
-                                      headers: { Authorization: `Bearer ${token}` }
-                                    });
-                                    if (res.ok) {
-                                      alert("Eliminado correctamente.");
-                                      loadAllMaintenanceTables(token, "SUPER_ADMIN");
-                                    }
-                                  }}
-                                  title="Eliminar"
-                                  className="p-1.5 bg-slate-800 hover:bg-rose-600/30 text-rose-400 rounded-lg cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))
+                          unspscMasterList
+                            .filter((u) => ((u as any).tipo_documento || "01") === selectedUnspscDocType)
+                            .map((item) => (
+                              <tr key={item.id} className="hover:bg-slate-800/30">
+                                <td className="px-5 py-4 font-mono font-bold text-indigo-400">{item.code}</td>
+                                <td className="px-5 py-4 text-white">{item.description}</td>
+                                <td className="px-5 py-4">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-indigo-300 border border-slate-700">
+                                    {item.category_type}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-4 font-mono font-bold text-emerald-400">{item.suggested_puc_account}</td>
+                                <td className="px-5 py-4 text-right space-x-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const itemDocType = ((item as any).tipo_documento || selectedUnspscDocType) as "01" | "91" | "92";
+                                      setSelectedUnspscDocType(itemDocType);
+                                      setEditingUnspscId(item.id);
+                                      setUnspscFormData({
+                                        code: item.code,
+                                        description: item.description,
+                                        category_type: item.category_type || "COMPRA",
+                                        suggested_puc_account: item.suggested_puc_account,
+                                        tipo_documento: itemDocType,
+                                        suggested_tipmov: (item.suggested_tipmov as "D" | "C") || (itemDocType === "91" ? "C" : "D")
+                                      });
+                                      setShowUnspscForm(true);
+                                    }}
+                                    title="Editar"
+                                    className="p-1.5 bg-slate-800 hover:bg-indigo-600/30 text-indigo-400 rounded-lg cursor-pointer"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (!confirm(`¿Seguro que deseas eliminar el UNSPSC ${item.code} del tipo ${selectedUnspscDocType}?`)) return;
+                                      const token = localStorage.getItem("access_token") || "";
+                                      const res = await fetch(`${API_BASE}/unspsc-master/${item.id}?tipo_documento=${selectedUnspscDocType}`, {
+                                        method: "DELETE",
+                                        headers: { Authorization: `Bearer ${token}` }
+                                      });
+                                      if (res.ok) {
+                                        alert("Eliminado correctamente.");
+                                        loadAllMaintenanceTables(token, currentUser?.role || "COMPANY_ADMIN");
+                                      }
+                                    }}
+                                    title="Eliminar"
+                                    className="p-1.5 bg-slate-800 hover:bg-rose-600/30 text-rose-400 rounded-lg cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
                         )}
                       </tbody>
                     </table>
@@ -3902,12 +3957,11 @@ export default function SaaSApplication() {
                   Centro de Exportación Masiva a ERPs
                 </h2>
                 <p className="text-sm text-slate-400">
-                  Descarga de planos contables compatibles con las principales plataformas del
-                  mercado.
+                  Descarga de planos contables separados por tipo de documento con el comprobante de la empresa.
                 </p>
               </div>
 
-              <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 flex items-center justify-between">
+              <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 space-y-5">
                 <div className="flex items-center space-x-4">
                   <FileOutput className="w-8 h-8 text-indigo-400" />
                   <div>
@@ -3915,33 +3969,70 @@ export default function SaaSApplication() {
                       Exportar Movimientos Contables Causados
                     </h4>
                     <p className="text-xs text-slate-400">
-                      Seleccione el software contable de destino para estructurar las partidas
-                      dobles.
+                      Seleccione el tipo de documento, indique el número/código de comprobante y elija el ERP destino.
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center space-x-3">
-                  <select
-                    value={selectedErp}
-                    onChange={(e) => setSelectedErp(e.target.value)}
-                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="siigo">Siigo Nube (.xlsx)</option>
-                    <option value="helisa">Helisa (.csv)</option>
-                    <option value="loggro">Loggro (.xlsx)</option>
-                    <option value="syscafe">SysCafé (.txt)</option>
-                    <option value="alegra">Alegra (.xlsx)</option>
-                    <option value="world_office">World Office (.xlsx)</option>
-                  </select>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      Tipo de Documento
+                    </label>
+                    <select
+                      value={exportDocType}
+                      onChange={(e) => setExportDocType(e.target.value as "01" | "91" | "92")}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="01">01 - Factura Electrónica</option>
+                      <option value="91">91 - Nota Crédito</option>
+                      <option value="92">92 - Nota Débito</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      Número / Código de Comprobante
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej: 01, CB-01, NC-01..."
+                      value={exportVoucherNumber}
+                      onChange={(e) => setExportVoucherNumber(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      ERP de Destino
+                    </label>
+                    <select
+                      value={selectedErp}
+                      onChange={(e) => setSelectedErp(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="siigo">Siigo Nube (.xlsx)</option>
+                      <option value="helisa">Helisa (.csv)</option>
+                      <option value="loggro">Loggro (.xlsx)</option>
+                      <option value="syscafe">SysCafé (.txt)</option>
+                      <option value="alegra">Alegra (.xlsx)</option>
+                      <option value="world_office">World Office (.xlsx)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
                   <button
-					type="button"
-					onClick={handleDownloadErpPlan}
-					className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
-				  >
-					<Download className="w-4 h-4" />
-					<span>Descargar Plano</span>
-				  </button>
-				</div>
+                    type="button"
+                    onClick={handleDownloadErpPlan}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Descargar Plano</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
