@@ -332,7 +332,137 @@ export default function SaaSApplication() {
     }
   };
 
+const handlePrintPrefactura = () => {
+    if (!activePrefacturaModal) return;
+    const { prefactura, issuer } = activePrefacturaModal;
+    const formatCOP = (val: any) =>
+      `$${Number(val || 0).toLocaleString("es-CO")}`;
+
+    const printWin = window.open("", "_blank", "width=850,height=950");
+    if (!printWin) {
+      window.print();
+      return;
+    }
+
+    const excessRowHtml =
+      Number(prefactura.excess_credits || 0) > 0
+        ? `
+          <tr>
+            <td style="padding:12px;border-bottom:1px solid #e2e8f0;">
+              <div style="font-weight:700;color:#0f172a;">Créditos Excedentes Consumidos</div>
+              <div style="font-size:11px;color:#64748b;">Superaron el cupo asignado del plan en el periodo</div>
+            </td>
+            <td style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${prefactura.excess_credits}</td>
+            <td style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${formatCOP(prefactura.additional_credit_fee)}</td>
+            <td style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;font-weight:700;">${formatCOP(prefactura.excess_amount)}</td>
+          </tr>
+        `
+        : "";
+
+    printWin.document.write(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Prefactura ${prefactura.prefactura_number || ""}</title>
+        <style>
+          body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; margin: 28px; font-size: 12px; }
+          .header { display: flex; justify-content: space-between; gap: 20px; border-bottom: 2px solid #cbd5e1; padding-bottom: 18px; }
+          .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; }
+          .title { font-size: 18px; font-weight: 800; margin: 4px 0; }
+          .mono { font-family: "Courier New", monospace; }
+          .box { margin-top: 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; border: 1px solid #e2e8f0; }
+          th { background: #f1f5f9; text-align: left; padding: 10px 12px; font-size: 10px; text-transform: uppercase; color: #475569; border-bottom: 1px solid #cbd5e1; }
+          .footer { margin-top: 22px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+          .totals { width: 260px; font-family: "Courier New", monospace; }
+          .totals div { display: flex; justify-content: space-between; padding: 4px 0; }
+          .total-final { font-size: 14px; font-weight: 800; border-top: 2px solid #0f172a; padding-top: 8px !important; margin-top: 6px; }
+          @media print { body { margin: 12px; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="label">Emisor del Servicio SaaS</div>
+            <div class="title">${issuer?.business_name || "POSSAR SALES S.A.S."}</div>
+            <div class="mono">NIT: ${issuer?.nit || "-"}${issuer?.dv ? `-${issuer.dv}` : ""}</div>
+            <div>${issuer?.address || ""}${issuer?.city_name ? ` — ${issuer.city_name}` : ""}</div>
+            <div>${issuer?.email || ""}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="label">Documento de Cobro Previo</div>
+            <div class="title mono" style="color:#4338ca;">${prefactura.prefactura_number || ""}</div>
+            <div>Periodo: <span class="mono">${prefactura.billing_period_start || ""}</span> a <span class="mono">${prefactura.billing_period_end || ""}</span></div>
+            <div>Vencimiento: <span class="mono" style="font-weight:700;">${prefactura.due_date || ""}</span></div>
+          </div>
+        </div>
+
+        <div class="box">
+          <div>
+            <div class="label">Cliente / Adquiriente</div>
+            <div style="font-weight:700;font-size:13px;margin-top:4px;">${prefactura.client_name || ""}</div>
+            <div class="mono">NIT: ${prefactura.client_nit || ""}${prefactura.client_dv ? `-${prefactura.client_dv}` : ""}</div>
+            <div>${prefactura.client_address || "Dirección por completar"}</div>
+          </div>
+          <div>
+            <div class="label">Información Fiscal & Consumo</div>
+            <div style="margin-top:4px;">Correo: <span class="mono">${prefactura.client_email || "-"}</span></div>
+            <div>Régimen IVA: <span class="mono">${prefactura.client_tax_regime || "48"}</span> | Resp: <span class="mono">${prefactura.client_fiscal_responsibilities || "R-99-PN"}</span></div>
+            <div>Créditos plan: <span class="mono" style="font-weight:700;">${prefactura.credits_allocated ?? 0}</span> | Consumidos: <span class="mono" style="font-weight:700;">${prefactura.credits_used ?? 0}</span></div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Concepto</th>
+              <th style="text-align:right;">Cantidad</th>
+              <th style="text-align:right;">Tarifa</th>
+              <th style="text-align:right;">Valor</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;">
+                <div style="font-weight:700;">Suscripción Plan ${prefactura.plan_name || ""}</div>
+                <div style="font-size:11px;color:#64748b;">Incluye ${prefactura.credits_allocated ?? 0} créditos de causación/procesamiento</div>
+              </td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">1</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${formatCOP(prefactura.plan_base_amount)}</td>
+              <td style="padding:12px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;font-weight:700;">${formatCOP(prefactura.plan_base_amount)}</td>
+            </tr>
+            ${excessRowHtml}
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <div style="max-width:420px;color:#475569;font-size:11px;">
+            <div style="font-weight:700;color:#0f172a;margin-bottom:3px;">Notas:</div>
+            <div>${prefactura.notes || ""}</div>
+          </div>
+          <div class="totals">
+            <div><span>Subtotal:</span><span>${formatCOP(prefactura.subtotal_amount)}</span></div>
+            <div><span>IVA (${Number(prefactura.iva_rate || 0)}%):</span><span>${formatCOP(prefactura.iva_amount)}</span></div>
+            <div class="total-final"><span>TOTAL COP:</span><span>${formatCOP(prefactura.total_amount)}</span></div>
+          </div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 250);
+          };
+        </script>
+      </body>
+      </html>
+    `);
+    printWin.document.close();
+  };
+
   const openEmitirPrefacturaModal = (row: BillingOrgRow) => {
+	  
     const fullOrg = organizationsList.find((o: any) => o.id === row.organization_id) as any;
     setClientDraftModal({
       row,
@@ -4845,7 +4975,7 @@ export default function SaaSApplication() {
           )}
 
           {/* MODAL DOCUMENTO COMERCIAL DE PREFACTURA */}
-          {activePrefacturaModal && (
+		  {activePrefacturaModal && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white text-slate-900 rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
                 <div className="px-6 py-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2">
@@ -4861,7 +4991,7 @@ export default function SaaSApplication() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => window.print()}
+					  onClick={handlePrintPrefactura}
                       className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
                     >
                       Imprimir / Guardar PDF
